@@ -14,7 +14,7 @@ import jline.Completor;
 import jline.ConsoleReader;
 import jline.SimpleCompletor;
 
-public class Duhdoop {
+public class HadooSh {
 	static Configuration config;
 	static FileSystem fs;
 	static Path p;
