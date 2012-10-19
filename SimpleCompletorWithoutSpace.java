@@ -4,10 +4,11 @@
  * This software is distributable under the BSD license. See the terms of the
  * BSD license in the documentation provided with this software.
  */
-package jline;
 
 import java.io.*;
 import java.util.*;
+
+import jline.Completor;
 
 /**
  *  <p>

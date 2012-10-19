@@ -56,11 +56,11 @@ public class Duhdoop {
 	}
 	
 	private static class HDFSCompletor implements Completor {
-		private SimpleCompletor completor; 
+		private SimpleCompletorWithoutSpace completor; 
 		
 		public HDFSCompletor()
 		{
-			completor = new SimpleCompletor(new String[] {});
+			completor = new SimpleCompletorWithoutSpace(new String[] {});
 		}
 	
 		public int complete(final String buffer, final int cursor, final List clist) {
@@ -101,6 +101,10 @@ public class Duhdoop {
 				if (!pathDir.equals("")) {
 				  candidates[i] = pathDir + "/" + candidates[i];
 				}
+				if(completions[i].isDir())
+					candidates[i] += "/";
+				else
+					candidates[i] += " ";
 			}
 
 			completor.setCandidateStrings(candidates);
