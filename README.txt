@@ -1,10 +1,23 @@
 Navigating HDFS from the command line is painful and doesn't feature tab
-completion for either paths or commands. The Duhdoop shell offers basic
-navigation commands to simylify this process.
+completion for either paths or commands. The HadooSh interactive shell
+offers basic navigation commands to simplify navigating the behemoth.
 
-Supported operations:
+Currently supported operations:
  - ls
  - cd
  - pwd
+
+Planned future actions:
+ - mv
+ - rm
+ - cp
+
+To use HadooSh, just copy the included jar to your Hadoop cluster's
+gateway, make sure you've kinit'd if necessary, and run the following:
+
+hadoop jar HadooSh.jar HadooSh
+
+
+
 
 Authors: Chris Beavers and Paul Hobbs
