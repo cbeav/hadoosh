@@ -24,7 +24,7 @@ public class HadooSh {
 
 	public static void main(String[] args) throws Exception {
 		config = new Configuration();
-		config.set("fs.default.name", "hdfs://localhost:9000");
+		//config.set("fs.default.name", "hdfs://localhost:9000");
 		fs = FileSystem.get(config);
 		
 		p = fs.getWorkingDirectory();
@@ -47,7 +47,7 @@ public class HadooSh {
 		String line;
 		PrintWriter out = new PrintWriter(System.out);
 		
-		while ((line = reader.readLine("> ").trim()) != null)
+		while ((line = reader.readLine(trimToLeaf(p.toString()) + " > ").trim()) != null)
 		{
 			if (line.equals("exit"))
 				break;
