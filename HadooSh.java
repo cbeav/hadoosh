@@ -1,9 +1,11 @@
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.io.InputStreamReader;
 import java.util.LinkedList;
 import java.util.List;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -37,7 +39,7 @@ public class HadooSh {
 		ConsoleReader reader = new ConsoleReader();
 		reader.setBellEnabled(false);
 		List completors = new LinkedList();
-		String[] commandsList = new String[] {"cd", "ls", "pwd", "exit"};
+		String[] commandsList = new String[] {"cd", "ls", "pwd", "exit", "cat"};
 		Completor fileCompletor = new HDFSCompletor();
 		completors.add(new SimpleCompletor(commandsList));
 		completors.add(fileCompletor);
@@ -55,6 +57,8 @@ public class HadooSh {
 				ls(line);
 			else if(line.startsWith("cd"))
 				cd(line);
+			else if(line.startsWith("cat"))
+				cat(line);
 			else if(line.startsWith("pwd"))
 				System.out.println(p.toString());
 			out.flush();
@@ -155,6 +159,34 @@ public class HadooSh {
 		{
 			String s = trimToLeaf(f.getPath().toString());
 			System.out.println(f.isDir() ? s + "/" : s);
+		}
+	}
+	
+	public static void cat(String fullCommand) throws IOException
+	{
+		String[] parts = fullCommand.split(" ");
+		if(parts.length == 1)
+		{
+			System.out.println("Error: not a file");
+			return;
+		}
+		else
+		{
+			for(int i=1; i<parts.length; i++)
+			{
+				Path f = new Path(p.toString(), parts[i]);
+                                System.out.println("path:" + f.toString());
+				if(fs.exists(f))
+				{
+                                        System.out.println(f.toString());
+					BufferedReader br = new BufferedReader(new InputStreamReader(fs.open(f)));
+					String s;
+				        while((s=br.readLine()) != null)
+					{
+					    System.out.println(s);
+					}
+				}
+			}
 		}
 	}
 	
