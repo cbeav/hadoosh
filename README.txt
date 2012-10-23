@@ -6,7 +6,7 @@ Currently supported operations:
  - ls
  - cd
  - pwd
- - head (currently just prints first line)
+ - head [numLines]
  - cat
 
 Planned future actions:
@@ -16,6 +16,7 @@ Planned future actions:
 
 Known bugs:
  - Tab completion fails when using ".."
+ - Using numLines with head breaks tab completion
 
 To use HadooSh, just copy the included jar to your Hadoop cluster's
 gateway, make sure you've kinit'd if necessary, and run the following:

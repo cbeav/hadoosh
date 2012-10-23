@@ -199,22 +199,49 @@ public class HadooSh {
 	public static void head(String fullCommand) throws IOException
 	{
 		String[] parts = fullCommand.split(" ");
-		if(parts.length == 1)
+		if(parts.length > 3)
+		{
+			System.out.println("Usage error: head [numLines] file");
+			return;
+		}
+		else if(parts.length == 1)
 		{
 			System.out.println("Error: not a file");
 			return;
 		}
 		else
 		{
-			for(int i=1; i<parts.length; i++)
+			try
 			{
-				Path f = new Path(p.toString(), parts[i]);
+				int numLines = 1;
+				Path f;
+				if(parts.length == 3)
+				{
+					numLines = Integer.parseInt(parts[1]);
+					f = new Path(p.toString(), parts[2]);
+				}
+				else
+					f = new Path(p.toString(), parts[1]);
 				if(fs.exists(f))
 				{
 					BufferedReader br = new BufferedReader(new InputStreamReader(fs.open(f)));
-					System.out.println(br.readLine());
+					String line = null;
+					int count = 0;
+					while((line = br.readLine()) != null && count < numLines)
+					{
+						System.out.println(line);
+						count++;
+					}
 					br.close();
 				}
+				else
+				{
+					System.out.println("Error: no such file");
+				}
+			} catch (Exception e)
+			{
+				e.printStackTrace();
+				System.out.println("Usage error: head [numLines] file");
 			}
 		}
 	}
