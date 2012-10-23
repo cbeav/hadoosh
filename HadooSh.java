@@ -1,3 +1,4 @@
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.InputStreamReader;
@@ -39,7 +40,7 @@ public class HadooSh {
 		ConsoleReader reader = new ConsoleReader();
 		reader.setBellEnabled(false);
 		List completors = new LinkedList();
-		String[] commandsList = new String[] {"cd", "ls", "pwd", "exit", "cat"};
+		String[] commandsList = new String[] {"cd", "ls", "pwd", "exit", "cat", "head"};
 		Completor fileCompletor = new HDFSCompletor();
 		completors.add(new SimpleCompletor(commandsList));
 		completors.add(fileCompletor);
@@ -59,6 +60,8 @@ public class HadooSh {
 				cd(line);
 			else if(line.startsWith("cat"))
 				cat(line);
+			else if(line.startsWith("head"))
+				head(line);
 			else if(line.startsWith("pwd"))
 				System.out.println(p.toString());
 			out.flush();
@@ -175,16 +178,42 @@ public class HadooSh {
 			for(int i=1; i<parts.length; i++)
 			{
 				Path f = new Path(p.toString(), parts[i]);
-                                System.out.println("path:" + f.toString());
 				if(fs.exists(f))
 				{
-                                        System.out.println(f.toString());
 					BufferedReader br = new BufferedReader(new InputStreamReader(fs.open(f)));
 					String s;
-				        while((s=br.readLine()) != null)
+				    while((s=br.readLine()) != null)
 					{
 					    System.out.println(s);
 					}
+				    br.close();
+				}
+				else
+				{
+					System.out.println("Error: not a file");
+				}
+			}
+		}
+	}
+	
+	public static void head(String fullCommand) throws IOException
+	{
+		String[] parts = fullCommand.split(" ");
+		if(parts.length == 1)
+		{
+			System.out.println("Error: not a file");
+			return;
+		}
+		else
+		{
+			for(int i=1; i<parts.length; i++)
+			{
+				Path f = new Path(p.toString(), parts[i]);
+				if(fs.exists(f))
+				{
+					BufferedReader br = new BufferedReader(new InputStreamReader(fs.open(f)));
+					System.out.println(br.readLine());
+					br.close();
 				}
 			}
 		}

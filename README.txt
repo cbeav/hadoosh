@@ -6,6 +6,8 @@ Currently supported operations:
  - ls
  - cd
  - pwd
+ - head (currently just prints first line)
+ - cat
 
 Planned future actions:
  - mv
