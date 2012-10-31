@@ -1,5 +1,6 @@
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.PrintWriter;
 import java.io.InputStreamReader;
 import java.util.LinkedList;
@@ -40,7 +41,7 @@ public class HadooSh {
 		ConsoleReader reader = new ConsoleReader();
 		reader.setBellEnabled(false);
 		List completors = new LinkedList();
-		String[] commandsList = new String[] {"cd", "ls", "pwd", "exit", "cat", "head"};
+		String[] commandsList = new String[] {"cd", "ls", "pwd", "exit", "cat", "head", "local"};
 		Completor fileCompletor = new HDFSCompletor();
 		completors.add(new SimpleCompletor(commandsList));
 		completors.add(fileCompletor);
@@ -52,22 +53,53 @@ public class HadooSh {
 		
 		while ((line = reader.readLine(trimToLeaf(p.toString()) + " > ").trim()) != null)
 		{
-			if (line.equals("exit"))
-				break;
-			else if(line.startsWith("ls"))
-				ls(line);
-			else if(line.startsWith("cd"))
-				cd(line);
-			else if(line.startsWith("cat"))
-				cat(line);
-			else if(line.startsWith("head"))
-				head(line);
-			else if(line.startsWith("pwd"))
-				System.out.println(p.toString());
-			out.flush();
+			try
+			{
+				if (line.equals("exit"))
+					break;
+				else if(line.startsWith("ls"))
+					ls(line);
+				else if(line.startsWith("cd"))
+					cd(line);
+				else if(line.startsWith("cat"))
+					cat(line);
+				else if(line.startsWith("head"))
+					head(line);
+				else if(line.startsWith("pwd"))
+					System.out.println(p.toString().substring(p.toString().indexOf(rootStr) + rootStr.length()));
+				else if(line.startsWith("local"))
+					sysExec(line.substring(line.indexOf("local") + "local".length()));
+				else
+					sysExec(line);
+				out.flush();
+			}
+			catch (Exception e)
+			{
+				e.printStackTrace();
+				// Do nothing!
+			}
+			catch (Throwable t)
+			{
+				t.printStackTrace();
+				// Do nothing!
+			}
 		}
 	}
 	
+	private static void sysExec(String line) throws IOException, InterruptedException {
+        Runtime rt = java.lang.Runtime.getRuntime();
+        Process p = rt.exec(line);
+        p.waitFor();
+        InputStream is = p.getInputStream();
+        BufferedReader reader = new BufferedReader(new InputStreamReader(is));
+        // And print each line
+        String s = null;
+        while ((s = reader.readLine()) != null) {
+            System.out.println(s);
+        }
+        is.close();
+	}
+
 	private static class HDFSCompletor implements Completor {
 		private SimpleCompletorWithoutSpace completor; 
 		
