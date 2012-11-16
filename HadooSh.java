@@ -1,8 +1,13 @@
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
 import java.io.PrintWriter;
 import java.io.InputStreamReader;
+import java.io.UnsupportedEncodingException;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -48,138 +53,123 @@ public class HadooSh {
 		reader.addCompletor(new ArgumentCompletor(completors));
 	
 		
-		String line;
 		PrintWriter out = new PrintWriter(System.out);
+		String line;
 		
 		while ((line = reader.readLine(trimToLeaf(p.toString()) + " > ").trim()) != null)
 		{
-			try
+			PipedInputStream is;
+			if (line.equals("exit"))
+				break;
+			else
 			{
-				if (line.equals("exit"))
-					break;
-				else if(line.startsWith("ls"))
-					ls(line);
-				else if(line.startsWith("cd"))
-					cd(line);
-				else if(line.startsWith("cat"))
-					cat(line);
-				else if(line.startsWith("head"))
-					head(line);
-				else if(line.startsWith("pwd"))
-					System.out.println(p.toString().substring(p.toString().indexOf(rootStr) + rootStr.length()));
-				else if(line.startsWith("local"))
-					sysExec(line.substring(line.indexOf("local") + "local".length()));
-				else
-					sysExec(line);
-				out.flush();
+				is = getCmdOutput(line);
 			}
-			catch (Exception e)
-			{
-				e.printStackTrace();
-				// Do nothing!
-			}
-			catch (Throwable t)
-			{
-				t.printStackTrace();
-				// Do nothing!
-			}
+			pipe("", is);
+			out.flush();
 		}
 	}
 	
-	private static void sysExec(String line) throws IOException, InterruptedException {
+	private static PipedInputStream pipe(String cmd, PipedInputStream pis) throws IOException
+	{
+		BufferedReader br = new BufferedReader(new InputStreamReader(pis));
+		String line;
+		while((line = br.readLine()) != null)
+			System.out.println(line);
+		
+		br.close();
+		pis.close();
+		
+		return pis;
+	}
+	
+	private static PipedInputStream getCmdOutput(String cmd)
+	{
+
+		PipedInputStream pis = new PipedInputStream();
+		try
+		{
+			String[] pipeBreaks = cmd.split("\\|");
+			String line = pipeBreaks[0];
+			
+			
+			PipedOutputStream os = new PipedOutputStream();
+			os.connect(pis);
+			
+			if(line.startsWith("ls"))
+				ls(line, os);
+			else if(line.startsWith("cd"))
+				cd(line, os);
+			else if(line.startsWith("cat"))
+				cat(line, os);
+			else if(line.startsWith("head"))
+				head(line, os);
+			else if(line.startsWith("pwd"))
+				pwd(line, os);
+			else if(line.startsWith("local"))
+				sysExec(line.substring(line.indexOf("local") + "local".length()), os);
+			else
+				sysExec(line, os);
+			
+			os.flush();
+			os.close();
+			return pis;
+		}
+		catch (Exception e)
+		{
+			e.printStackTrace();
+			// Do nothing!
+		}
+		catch (Throwable t)
+		{
+			t.printStackTrace();
+			// Do nothing!
+		}
+		return null;
+	}
+	
+	private static void println(OutputStream os, String s) throws IOException
+	{
+		os.write((s + "\n").getBytes());
+	}
+	
+	private static void sysExec(String line, OutputStream os) throws IOException, InterruptedException {
         Runtime rt = java.lang.Runtime.getRuntime();
         Process p = rt.exec(line);
         p.waitFor();
         InputStream is = p.getInputStream();
-        BufferedReader reader = new BufferedReader(new InputStreamReader(is));
-        // And print each line
+        InputStream es = p.getErrorStream();
+        BufferedReader br = new BufferedReader(new InputStreamReader(is));
+        
         String s = null;
-        while ((s = reader.readLine()) != null) {
-            System.out.println(s);
+        while ((s = br.readLine()) != null) {
+            println(os, s);
         }
+        br.close();
         is.close();
-	}
 
-	private static class HDFSCompletor implements Completor {
-		private SimpleCompletorWithoutSpace completor; 
-		
-		public HDFSCompletor()
-		{
-			completor = new SimpleCompletorWithoutSpace(new String[] {});
-		}
-	
-		public int complete(final String buffer, final int cursor, final List clist) {
-			String myBuffer = buffer == null ? "" : buffer;
-			int lastSlash = myBuffer.lastIndexOf('/');
-			String pathDir, pathCont;
-			try {
-				pathDir = myBuffer.substring(0, lastSlash);
-				pathCont = myBuffer.substring(lastSlash+1, myBuffer.length());
-			} catch (Exception e) {
-				pathDir = "";
-				pathCont = myBuffer;
-			}
-			
-			String dir;
-			if(myBuffer.startsWith("/"))
-			{
-				dir = rootStr + "/";
-			} else {
-				dir = p.toString() + "/";
-			}
- 
-			if (!pathDir.equals("") || myBuffer.equals("/")) {
-				String extra = pathDir;
-				if (myBuffer.startsWith("/"))
-						extra = extra.substring(1);
-				dir += extra + "/";
-			}
-			
-			String prefix = dir;
-			if (!pathCont.equals("")) {
-			   prefix += pathCont;
-			}
-			
-			PathFilter pf = new MatchingPrefixPathFilter(prefix);
-			
-			FileStatus[] completions;
-			try {
-				completions = fs.listStatus(new Path(dir), pf);
-			} catch (IOException e) {
-				completions = null;
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
-
-			String[] candidates = new String[completions.length];
-
-			for (int i = 0; i < completions.length; i++) {
-				candidates[i] = trimToLeaf(completions[i].getPath().toString());
-				if (!pathDir.equals("")) {
-				  candidates[i] = pathDir + "/" + candidates[i];
-				}
-				else if (myBuffer.startsWith("/")) {
-					candidates[i] = "/" + candidates[i];
-				}
-					
-				if(completions[i].isDir())
-					candidates[i] += "/";
-				else
-					candidates[i] += " ";
-			}
-
-			completor.setCandidateStrings(candidates);
-			return completor.complete(myBuffer, cursor, clist);
-		}
+        br = new BufferedReader(new InputStreamReader(es));
+        s = null;
+        while ((s = br.readLine()) != null) {
+            println(os, s);
+        }
+        br.close();
+        es.close();
 	}
 	
-	public static void ls(String fullCommand) throws IOException
+	private static void pwd(String line, OutputStream os) throws UnsupportedEncodingException, IOException
+	{
+		println(os, p.toString().substring(p.toString().indexOf(rootStr) + rootStr.length()));
+	}
+
+	
+	public static void ls(String fullCommand, OutputStream os) throws IOException
 	{
 		String[] parts = fullCommand.split(" ");
 		Path targetDir = null;
 		if(parts.length > 2)
 		{
-			System.out.println("You can't change to multiple directories");
+			println(os, "You can't change to multiple directories");
 			return;
 		}
 		else if(parts.length == 1)
@@ -193,16 +183,16 @@ public class HadooSh {
 		for(FileStatus f : stati)
 		{
 			String s = trimToLeaf(f.getPath().toString());
-			System.out.println(f.isDir() ? s + "/" : s);
+			println(os, f.isDir() ? s + "/" : s);
 		}
 	}
 	
-	public static void cat(String fullCommand) throws IOException
+	public static void cat(String fullCommand, OutputStream os) throws IOException
 	{
 		String[] parts = fullCommand.split(" ");
 		if(parts.length == 1)
 		{
-			System.out.println("Error: not a file");
+			println(os, "Error: not a file");
 			return;
 		}
 		else
@@ -216,29 +206,29 @@ public class HadooSh {
 					String s;
 				    while((s=br.readLine()) != null)
 					{
-					    System.out.println(s);
+					    println(os, s);
 					}
 				    br.close();
 				}
 				else
 				{
-					System.out.println("Error: not a file");
+					println(os, "Error: not a file");
 				}
 			}
 		}
 	}
 	
-	public static void head(String fullCommand) throws IOException
+	public static void head(String fullCommand, OutputStream os) throws IOException
 	{
 		String[] parts = fullCommand.split(" ");
 		if(parts.length > 3)
 		{
-			System.out.println("Usage error: head [numLines] file");
+			println(os, "Usage error: head [numLines] file");
 			return;
 		}
 		else if(parts.length == 1)
 		{
-			System.out.println("Error: not a file");
+			println(os, "Error: not a file");
 			return;
 		}
 		else
@@ -261,39 +251,37 @@ public class HadooSh {
 					int count = 0;
 					while((line = br.readLine()) != null && count < numLines)
 					{
-						System.out.println(line);
+						println(os, line);
 						count++;
 					}
 					br.close();
 				}
 				else
 				{
-					System.out.println("Error: no such file");
+					println(os, "Error: no such file");
 				}
 			} catch (Exception e)
 			{
 				e.printStackTrace();
-				System.out.println("Usage error: head [numLines] file");
+				println(os, "Usage error: head [numLines] file");
 			}
 		}
 	}
 	
-	public static void cd(String fullCommand) throws IOException
+	public static void cd(String fullCommand, OutputStream os) throws IOException
 	{
 		String[] parts = fullCommand.split(" ");
 		if(parts.length > 2)
-			System.out.println("You can't change to multiple directories");
+			println(os, "You can't change to multiple directories");
 		else if(parts.length == 1)
 			p = new Path(home.toString());
 		else if(parts[1].startsWith("/"))
 		{
-
-			
 			Path targetPath = new Path(root, parts[1]);
 			if(fs.exists(targetPath))
 				p = targetPath;
 			else
-				System.out.println("Path " + targetPath.toString() + " does not exist");
+				println(os, "Path " + targetPath.toString() + " does not exist");
 		}
 		else
 		{
@@ -301,7 +289,7 @@ public class HadooSh {
 			if(fs.exists(targetPath))
 				p = targetPath;
 			else
-				System.out.println("Path " + targetPath.toString() + " does not exist");
+				println(os, "Path " + targetPath.toString() + " does not exist");
 		}
 	}
 	
@@ -310,6 +298,81 @@ public class HadooSh {
 		String[] parts = path.split("/");
 		return parts[parts.length - 1];
 	}
+	
+	private static class HDFSCompletor implements Completor
+	{
+		private SimpleCompletorWithoutSpace completor; 
+		
+		public HDFSCompletor()
+		{
+			completor = new SimpleCompletorWithoutSpace(new String[] {});
+		}
+		
+		public int complete(final String buffer, final int cursor, final List clist) {
+			String myBuffer = buffer == null ? "" : buffer;
+			int lastSlash = myBuffer.lastIndexOf('/');
+			String pathDir, pathCont;
+			try {
+				pathDir = myBuffer.substring(0, lastSlash);
+				pathCont = myBuffer.substring(lastSlash+1, myBuffer.length());
+			} catch (Exception e) {
+				pathDir = "";
+				pathCont = myBuffer;
+			}
+			
+			String dir;
+			if(myBuffer.startsWith("/"))
+			{
+				dir = rootStr + "/";
+			} else {
+				dir = p.toString() + "/";
+			}
+			
+			if (!pathDir.equals("") || myBuffer.equals("/")) {
+				String extra = pathDir;
+				if (myBuffer.startsWith("/"))
+					extra = extra.substring(1);
+				dir += extra + "/";
+			}
+			
+			String prefix = dir;
+			if (!pathCont.equals("")) {
+				prefix += pathCont;
+			}
+			
+			PathFilter pf = new MatchingPrefixPathFilter(prefix);
+			
+			FileStatus[] completions;
+			try {
+				completions = fs.listStatus(new Path(dir), pf);
+			} catch (IOException e) {
+				completions = null;
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+			
+			String[] candidates = new String[completions.length];
+			
+			for (int i = 0; i < completions.length; i++) {
+				candidates[i] = trimToLeaf(completions[i].getPath().toString());
+				if (!pathDir.equals("")) {
+					candidates[i] = pathDir + "/" + candidates[i];
+				}
+				else if (myBuffer.startsWith("/")) {
+					candidates[i] = "/" + candidates[i];
+				}
+				
+				if(completions[i].isDir())
+					candidates[i] += "/";
+				else
+					candidates[i] += " ";
+			}
+			
+			completor.setCandidateStrings(candidates);
+			return completor.complete(myBuffer, cursor, clist);
+		}
+	}
+
 	
 	private static class MatchingPrefixPathFilter implements PathFilter {
 		String _prefix;
