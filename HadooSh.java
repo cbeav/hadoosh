@@ -1,5 +1,7 @@
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -14,6 +16,7 @@ import java.util.List;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
+import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -32,7 +35,7 @@ public class HadooSh {
 	static String rootStr;
 	static Path root;
 
-	private final static boolean DEBUG = false;
+	private final static boolean DEBUG = true;
 
 	public static void main(String[] args) throws Exception {
 		config = new Configuration();
@@ -65,6 +68,21 @@ public class HadooSh {
 				if (line.equals("exit"))
 					break;
 				else {
+					int localOut = line.indexOf(">l");
+					int remoteOut = line.indexOf(">");
+					String outLoc = "";
+					if(localOut > 0)
+					{
+						outLoc = line.split(">l")[1];
+						line = line.substring(0, localOut);
+					}
+					else if (remoteOut > 0)
+					{
+						outLoc = line.split(">")[1];
+						line = line.substring(0, remoteOut);
+					}
+					outLoc = outLoc.trim();
+					
 					String[] pipeBreaks = line.split("\\|");
 					// For now assume command is on hdfs
 					is = getCmdOutput(pipeBreaks[0]);
@@ -75,9 +93,19 @@ public class HadooSh {
 						dumpToOS(is, os);
 						os.close();
 						InputStream newIn = p.getInputStream();
-						dump(newIn, System.out);
+						if(localOut > 0)
+							dumpToFile(newIn, outLoc);
+						else if(remoteOut > 0)
+							dumpToHDFS(newIn, outLoc);
+						else
+							dump(newIn, System.out);
 					} else
-						dump(is, System.out);
+						if(localOut > 0)
+							dumpToFile(is, outLoc);
+						else if(remoteOut > 0)
+							dumpToHDFS(is, outLoc);
+						else
+							dump(is, System.out);
 
 				}
 				out.flush();
@@ -107,9 +135,56 @@ public class HadooSh {
 		is.close();
 	}
 	
+	private static void dumpToFile(InputStream is, String loc)
+			throws IOException {
+		BufferedReader br = new BufferedReader(new InputStreamReader(is));
+		// Warning, blindly over-writing files?
+		String fullLoc;
+		if(loc.startsWith("/"))
+			fullLoc = loc;
+		else
+			fullLoc = System.getProperty("user.dir") + "/" + loc;
+		BufferedWriter os = new BufferedWriter(new FileWriter(fullLoc));
+		
+		
+		String line;
+		while ((line = br.readLine()) != null)
+		{
+			os.write(line + '\n');
+		}
+
+		os.close();
+		br.close();
+		is.close();
+	}
+	
+	private static void dumpToHDFS(InputStream is, String loc)
+			throws IOException {
+		BufferedReader br = new BufferedReader(new InputStreamReader(is));
+		FileSystem fs = FileSystem.get(new Configuration());
+		Path outPath;
+		if(loc.startsWith("/"))
+			outPath = new Path(loc);
+		else
+			outPath = new Path(p, loc);
+		FSDataOutputStream os = fs.create(outPath, true);
+		
+		String line;
+		while ((line = br.readLine()) != null)
+		{
+			os.write(line.getBytes());
+			os.write('\n');
+		}
+
+		os.close();
+		br.close();
+		is.close();
+	}
+	
 	private static void dump(InputStream is, PrintStream os)
 			throws IOException {
 		BufferedReader br = new BufferedReader(new InputStreamReader(is));
+		
 		String line;
 		while ((line = br.readLine()) != null)
 		{
