@@ -1,6 +1,7 @@
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
+import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
@@ -85,44 +86,67 @@ public class HadooSh {
 					outLoc = outLoc.trim();
 					
 					String[] pipeBreaks = line.split("\\|");
-					is = getCmdOutput(pipeBreaks[0]);
+					OutputStream[] oss = new OutputStream[pipeBreaks.length];
+					InputStream[] iss = new InputStream[pipeBreaks.length];
+					
 					if (pipeBreaks.length > 1) {
+						
+						// First, set up all input and output streams
 						Runtime rt = java.lang.Runtime.getRuntime();
-						// Assume that all commands beyond first are local
-						Process p = rt.exec(pipeBreaks[1]);
-						OutputStream os = p.getOutputStream();
-						dumpToOS(is, os);
-						os.close();
-						InputStream newIn = p.getInputStream();
-						OutputStream[] oss = new OutputStream[pipeBreaks.length -2];
-						InputStream[] iss = new InputStream[pipeBreaks.length -2];
+						for(int i=1; i < pipeBreaks.length; i++)
+						{
+							Process pr = rt.exec(pipeBreaks[i]);
+							iss[i] = pr.getInputStream();
+							oss[i] = pr.getOutputStream();
+						}
+						// Now connect our first process to the first outputstream
+						getCmdOutput(pipeBreaks[0], oss[1]);
+						
+						// Then run it through the chain...
 						for(int i=2; i < pipeBreaks.length; i++)
 						{
-							p = rt.exec(pipeBreaks[i]);
-							os = p.getOutputStream();
-							dumpToOS(newIn, os);
-							oss[i-2] = os;
-							iss[i-2] = is;
-							newIn = p.getInputStream();
+							dumpToOS(iss[i-1], oss[i]);
 						}
-						for(int i=0; i < pipeBreaks.length - 2; i++)
+
+						// Close up our streams
+						for(int i=1; i < pipeBreaks.length; i++)
 						{
-							iss[i].close();
 							oss[i].close();
+							if(i < pipeBreaks.length - 1)
+								iss[i].close();
 						}
+						
+						// Now take our final output, and write it where appropriate
+						InputStream finalIn = iss[pipeBreaks.length - 1];
+						
 						if(localOut > 0)
-							dumpToFile(newIn, outLoc);
+							dumpToFile(finalIn, outLoc);
 						else if(remoteOut > 0)
-							dumpToHDFS(newIn, outLoc);
+						{
+							dumpToHDFS(finalIn, outLoc);
+						}
 						else
-							dump(newIn, System.out);
+							dumpToOS(finalIn, System.out);
+						finalIn.close();
 					} else
+					{
 						if(localOut > 0)
-							dumpToFile(is, outLoc);
+						{
+							FileOutputStream os = new FileOutputStream(getLocalPath(outLoc));
+							getCmdOutput(pipeBreaks[0], os);
+							os.close();
+						}
 						else if(remoteOut > 0)
-							dumpToHDFS(is, outLoc);
+						{
+							FileSystem fs = FileSystem.get(new Configuration());
+							Path outPath = getPath(outLoc);
+							FSDataOutputStream os = fs.create(outPath, true);
+							getCmdOutput(pipeBreaks[0], os);
+							os.close();
+						}
 						else
-							dump(is, System.out);
+							getCmdOutput(pipeBreaks[0], System.out);
+					}
 
 				}
 				out.flush();
@@ -146,29 +170,22 @@ public class HadooSh {
 		{
 			os.write(line.getBytes());
 			os.write('\n');
-			os.flush();
 		}
 
 		br.close();
-		is.close();
 	}
 	
 	private static void dumpToFile(InputStream is, String loc)
 			throws IOException {
 		BufferedReader br = new BufferedReader(new InputStreamReader(is));
 		// Warning, blindly over-writing files?
-		String fullLoc;
-		if(loc.startsWith("/"))
-			fullLoc = loc;
-		else
-			fullLoc = System.getProperty("user.dir") + "/" + loc;
+		String fullLoc = getLocalPath(loc);
 		BufferedWriter os = new BufferedWriter(new FileWriter(fullLoc));
 		
 		String line;
 		while ((line = br.readLine()) != null)
 		{
 			os.write(line + '\n');
-			os.flush();
 		}
 
 		os.close();
@@ -188,7 +205,6 @@ public class HadooSh {
 		{
 			os.write(line.getBytes());
 			os.write('\n');
-			os.flush();
 		}
 
 		os.close();
@@ -205,7 +221,6 @@ public class HadooSh {
 		{
 			os.write(line.getBytes());
 			os.write('\n');
-			os.flush();
 		}
 
 		br.close();
@@ -216,16 +231,17 @@ public class HadooSh {
 	{
 		return input.startsWith("/") ? new Path(input) : new Path(p, input);
 	}
+	
+	private static String getLocalPath(String input)
+	{
+		String localPath;
+		return input.startsWith("/") ? input : System.getProperty("user.dir") + "/" + input;
+	}
 
-	private static PipedInputStream getCmdOutput(String cmd)
+	private static void getCmdOutput(String cmd, OutputStream os)
 			throws IOException, InterruptedException {
 
-		PipedInputStream pis = new PipedInputStream(100000);
-
 		String line = cmd;
-
-		PipedOutputStream os = new PipedOutputStream();
-		os.connect(pis);
 
 		if (line.startsWith("ls"))
 			ls(line, os);
@@ -247,14 +263,12 @@ public class HadooSh {
 		else
 			sysExec(line, os);
 
-		os.close();
-		return pis;
+		//os.close();
 	}
 
 	private static void println(OutputStream os, String s) throws IOException {
 		os.write(s.getBytes());
 		os.write('\n');
-		os.flush();
 	}
 
 	private static void sysExec(String line, OutputStream os)
@@ -271,7 +285,6 @@ public class HadooSh {
 			println(os, s);
 		}
 		br.close();
-		is.close();
 
 		br = new BufferedReader(new InputStreamReader(es));
 		s = null;
@@ -279,7 +292,6 @@ public class HadooSh {
 			println(os, s);
 		}
 		br.close();
-		es.close();
 	}
 
 	private static void pwd(String line, OutputStream os)
