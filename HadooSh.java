@@ -11,6 +11,7 @@ import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
+import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -35,7 +36,7 @@ public class HadooSh {
 	static String rootStr;
 	static Path root;
 
-	private final static boolean DEBUG = true;
+	private final static boolean DEBUG = false;
 
 	public static void main(String[] args) throws Exception {
 		config = new Configuration();
@@ -53,7 +54,7 @@ public class HadooSh {
 		reader.setBellEnabled(false);
 		List completors = new LinkedList();
 		String[] commandsList = new String[] { "cd", "ls", "pwd", "exit",
-				"cat", "head", "local" };
+				"cat", "head", "local", "rm", "mv" };
 		Completor fileCompletor = new HDFSCompletor();
 		completors.add(new SimpleCompletor(commandsList));
 		completors.add(fileCompletor);
@@ -84,15 +85,31 @@ public class HadooSh {
 					outLoc = outLoc.trim();
 					
 					String[] pipeBreaks = line.split("\\|");
-					// For now assume command is on hdfs
 					is = getCmdOutput(pipeBreaks[0]);
 					if (pipeBreaks.length > 1) {
 						Runtime rt = java.lang.Runtime.getRuntime();
-						Process p = rt.exec(pipeBreaks[1] + " -");
+						// Assume that all commands beyond first are local
+						Process p = rt.exec(pipeBreaks[1]);
 						OutputStream os = p.getOutputStream();
 						dumpToOS(is, os);
 						os.close();
 						InputStream newIn = p.getInputStream();
+						OutputStream[] oss = new OutputStream[pipeBreaks.length -2];
+						InputStream[] iss = new InputStream[pipeBreaks.length -2];
+						for(int i=2; i < pipeBreaks.length; i++)
+						{
+							p = rt.exec(pipeBreaks[i]);
+							os = p.getOutputStream();
+							dumpToOS(newIn, os);
+							oss[i-2] = os;
+							iss[i-2] = is;
+							newIn = p.getInputStream();
+						}
+						for(int i=0; i < pipeBreaks.length - 2; i++)
+						{
+							iss[i].close();
+							oss[i].close();
+						}
 						if(localOut > 0)
 							dumpToFile(newIn, outLoc);
 						else if(remoteOut > 0)
@@ -146,7 +163,6 @@ public class HadooSh {
 			fullLoc = System.getProperty("user.dir") + "/" + loc;
 		BufferedWriter os = new BufferedWriter(new FileWriter(fullLoc));
 		
-		
 		String line;
 		while ((line = br.readLine()) != null)
 		{
@@ -162,11 +178,7 @@ public class HadooSh {
 			throws IOException {
 		BufferedReader br = new BufferedReader(new InputStreamReader(is));
 		FileSystem fs = FileSystem.get(new Configuration());
-		Path outPath;
-		if(loc.startsWith("/"))
-			outPath = new Path(loc);
-		else
-			outPath = new Path(p, loc);
+		Path outPath = getPath(loc);
 		FSDataOutputStream os = fs.create(outPath, true);
 		
 		String line;
@@ -195,6 +207,11 @@ public class HadooSh {
 		br.close();
 		is.close();
 	}
+	
+	private static Path getPath(String input)
+	{
+		return input.startsWith("/") ? new Path(input) : new Path(p, input);
+	}
 
 	private static PipedInputStream getCmdOutput(String cmd)
 			throws IOException, InterruptedException {
@@ -216,6 +233,10 @@ public class HadooSh {
 			head(line, os);
 		else if (line.startsWith("pwd"))
 			pwd(line, os);
+		else if(line.startsWith("rm"))
+			rm(line, os);
+		else if(line.startsWith("mv"))
+			mv(line, os);
 		else if (line.startsWith("local"))
 			sysExec(line.substring(line.indexOf("local") + "local".length()),
 					os);
@@ -262,6 +283,35 @@ public class HadooSh {
 		println(os,
 				p.toString().substring(
 						p.toString().indexOf(rootStr) + rootStr.length()));
+	}
+	
+	public static void rm(String fullCommand, OutputStream os) throws IOException
+	{
+		String[] parts = fullCommand.split(" ");
+		for(int i=1; i < parts.length; i++)
+		{
+			Path targ = getPath(parts[i]);
+			if(fs.exists(targ))
+				fs.delete(targ);
+			else
+				println(os, "can't delete + " + targ + ". no such file");
+		}
+	}
+	
+	public static void mv(String fullCommand, OutputStream os) throws IOException
+	{
+		String[] parts = fullCommand.split(" ");
+		if(parts.length != 3)
+			println(os, "error: not given input and output path for move");
+		else
+		{
+			Path src = getPath(parts[1]);
+			Path dst = getPath(parts[2]);
+			if(fs.exists(src))
+				fs.rename(src, dst);
+			else
+				println(os, "can't move + " + src + ". no such file");
+		}
 	}
 
 	public static void ls(String fullCommand, OutputStream os)
