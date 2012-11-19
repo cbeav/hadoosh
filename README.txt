@@ -28,6 +28,9 @@ Planned future actions:
 Known bugs:
  - Tab completion fails when using ".."
  - Using numLines with head breaks tab completion
+ - Currently breaking on files > 100000 characters. This is a problem
+   with the ring buffer used by our pipes, and is being looked into
+   actively
 
 To use HadooSh, just copy the included jar to your Hadoop cluster's
 gateway, make sure you've kinit'd if necessary, and run the following:

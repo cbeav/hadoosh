@@ -146,6 +146,7 @@ public class HadooSh {
 		{
 			os.write(line.getBytes());
 			os.write('\n');
+			os.flush();
 		}
 
 		br.close();
@@ -167,6 +168,7 @@ public class HadooSh {
 		while ((line = br.readLine()) != null)
 		{
 			os.write(line + '\n');
+			os.flush();
 		}
 
 		os.close();
@@ -186,6 +188,7 @@ public class HadooSh {
 		{
 			os.write(line.getBytes());
 			os.write('\n');
+			os.flush();
 		}
 
 		os.close();
@@ -202,6 +205,7 @@ public class HadooSh {
 		{
 			os.write(line.getBytes());
 			os.write('\n');
+			os.flush();
 		}
 
 		br.close();
@@ -216,7 +220,7 @@ public class HadooSh {
 	private static PipedInputStream getCmdOutput(String cmd)
 			throws IOException, InterruptedException {
 
-		PipedInputStream pis = new PipedInputStream(10000);
+		PipedInputStream pis = new PipedInputStream(100000);
 
 		String line = cmd;
 
