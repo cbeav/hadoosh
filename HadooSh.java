@@ -99,22 +99,26 @@ public class HadooSh {
 							iss[i] = pr.getInputStream();
 							oss[i] = pr.getOutputStream();
 						}
+						
 						// Now connect our first process to the first outputstream
 						getCmdOutput(pipeBreaks[0], oss[1]);
+						oss[1].close();
 						
 						// Then run it through the chain...
 						for(int i=2; i < pipeBreaks.length; i++)
 						{
 							dumpToOS(iss[i-1], oss[i]);
+							iss[i-1].close();
+							oss[i].close();
 						}
 
 						// Close up our streams
-						for(int i=1; i < pipeBreaks.length; i++)
-						{
-							oss[i].close();
-							if(i < pipeBreaks.length - 1)
-								iss[i].close();
-						}
+						//for(int i=1; i < pipeBreaks.length; i++)
+						//{
+						//	oss[i].close();
+						//	if(i < pipeBreaks.length - 1)
+						//		iss[i].close();
+						//}
 						
 						// Now take our final output, and write it where appropriate
 						InputStream finalIn = iss[pipeBreaks.length - 1];
@@ -234,7 +238,6 @@ public class HadooSh {
 	
 	private static String getLocalPath(String input)
 	{
-		String localPath;
 		return input.startsWith("/") ? input : System.getProperty("user.dir") + "/" + input;
 	}
 
@@ -262,8 +265,6 @@ public class HadooSh {
 					os);
 		else
 			sysExec(line, os);
-
-		//os.close();
 	}
 
 	private static void println(OutputStream os, String s) throws IOException {
