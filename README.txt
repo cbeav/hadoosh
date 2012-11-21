@@ -17,20 +17,19 @@ Currently supported operations:
  - cat [files]
  - mv <src> <dst>
  - rm  [files]
+ - avrocat (prints the first ten records from avro file)
  - local (to execute one of the above commands on the local FS)
  - support for piping to local commands
  - use ">" to run command output to HDFS filesystem
  - use ">l" to run command output to local filesystem
 
+
 Planned future actions:
- - cp (currently can do 'cat src > dst' if desperate)
+ - cp
+ - should probably put some limits on file sizes
 
 Known bugs:
  - Tab completion fails when using ".."
- - Using numLines with head breaks tab completion
- - Currently breaking on files > 100000 characters. This is a problem
-   with the ring buffer used by our pipes, and is being looked into
-   actively
 
 To use HadooSh, just copy the included jar to your Hadoop cluster's
 gateway, make sure you've kinit'd if necessary, and run the following:
