@@ -16,6 +16,13 @@ import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 
+import org.apache.avro.Schema;
+import org.apache.avro.file.DataFileStream;
+import org.apache.avro.generic.GenericDatumReader;
+import org.apache.avro.generic.GenericDatumWriter;
+import org.apache.avro.io.DatumWriter;
+import org.apache.avro.io.Encoder;
+import org.apache.avro.io.JsonEncoder;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
@@ -23,6 +30,9 @@ import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PathFilter;
+import org.codehaus.jackson.JsonEncoding;
+import org.codehaus.jackson.JsonFactory;
+import org.codehaus.jackson.JsonGenerator;
 
 import jline.ArgumentCompletor;
 import jline.Completor;
@@ -55,7 +65,7 @@ public class HadooSh {
 		reader.setBellEnabled(false);
 		List completors = new LinkedList();
 		String[] commandsList = new String[] { "cd", "ls", "pwd", "exit",
-				"cat", "head", "local", "rm", "mv" };
+				"cat", "head", "local", "rm", "mv", "avrocat" };
 		Completor fileCompletor = new HDFSCompletor();
 		completors.add(new SimpleCompletor(commandsList));
 		completors.add(fileCompletor);
@@ -111,14 +121,6 @@ public class HadooSh {
 							iss[i-1].close();
 							oss[i].close();
 						}
-
-						// Close up our streams
-						//for(int i=1; i < pipeBreaks.length; i++)
-						//{
-						//	oss[i].close();
-						//	if(i < pipeBreaks.length - 1)
-						//		iss[i].close();
-						//}
 						
 						// Now take our final output, and write it where appropriate
 						InputStream finalIn = iss[pipeBreaks.length - 1];
@@ -260,6 +262,8 @@ public class HadooSh {
 			rm(line, os);
 		else if(line.startsWith("mv"))
 			mv(line, os);
+		else if(line.startsWith("avrocat"))
+			avrocat(line, os);
 		else if (line.startsWith("local"))
 			sysExec(line.substring(line.indexOf("local") + "local".length()),
 					os);
@@ -302,6 +306,27 @@ public class HadooSh {
 						p.toString().indexOf(rootStr) + rootStr.length()));
 	}
 	
+	public static void avrocat(String fullCommand, OutputStream os) throws IOException
+	{
+		String[] parts = fullCommand.split(" ");
+		if(parts.length < 2)
+		{
+			println(os, "error: no avrocat files specified");
+		}
+		for(int i=1; i < parts.length; i++)
+		{
+			Path loc = getPath(parts[1]);
+			if(fs.exists(loc))
+			{
+				println(os, "First ten records of " + parts[1]);
+				displayFile(fs, loc, os, 0, 10);
+				os.write('\n');
+			}
+			else
+				println(os, "error, no such file " + parts[1]);
+		}
+	}
+	
 	public static void rm(String fullCommand, OutputStream os) throws IOException
 	{
 		String[] parts = fullCommand.split(" ");
@@ -336,7 +361,7 @@ public class HadooSh {
 		String[] parts = fullCommand.split(" ");
 		Path targetDir = null;
 		if (parts.length > 2) {
-			println(os, "You can't change to multiple directories");
+			println(os, "error, too many directories");
 			return;
 		} else if (parts.length == 1)
 			targetDir = p;
@@ -355,7 +380,7 @@ public class HadooSh {
 			throws IOException {
 		String[] parts = fullCommand.split(" ");
 		if (parts.length == 1) {
-			println(os, "Error: not a file");
+			println(os, "error, not a file");
 			return;
 		} else {
 			for (int i = 1; i < parts.length; i++) {
@@ -369,7 +394,7 @@ public class HadooSh {
 					}
 					br.close();
 				} else {
-					println(os, "Error: not a file");
+					println(os, "error, not a file");
 				}
 			}
 		}
@@ -379,10 +404,10 @@ public class HadooSh {
 			throws IOException {
 		String[] parts = fullCommand.split(" ");
 		if (parts.length > 3) {
-			println(os, "Usage error: head [numLines] file");
+			println(os, "error, usage: head [numLines] file");
 			return;
 		} else if (parts.length == 1) {
-			println(os, "Error: not a file");
+			println(os, "error, not a file");
 			return;
 		} else {
 			try {
@@ -404,11 +429,11 @@ public class HadooSh {
 					}
 					br.close();
 				} else {
-					println(os, "Error: no such file");
+					println(os, "error, no such file");
 				}
 			} catch (Exception e) {
 				e.printStackTrace();
-				println(os, "Usage error: head [numLines] file");
+				println(os, "error, usage: head [numLines] file");
 			}
 		}
 	}
@@ -417,7 +442,7 @@ public class HadooSh {
 			throws IOException {
 		String[] parts = fullCommand.split(" ");
 		if (parts.length > 2)
-			println(os, "You can't change to multiple directories");
+			println(os, "error, too many directories");
 		else if (parts.length == 1)
 			p = new Path(home.toString());
 		else if (parts[1].startsWith("/")) {
@@ -425,13 +450,13 @@ public class HadooSh {
 			if (fs.exists(targetPath))
 				p = targetPath;
 			else
-				println(os, "Path " + targetPath.toString() + " does not exist");
+				println(os, "path " + targetPath.toString() + " does not exist");
 		} else {
 			Path targetPath = new Path(p, parts[1]);
 			if (fs.exists(targetPath))
 				p = targetPath;
 			else
-				println(os, "Path " + targetPath.toString() + " does not exist");
+				println(os, "path " + targetPath.toString() + " does not exist");
 		}
 	}
 
@@ -510,6 +535,51 @@ public class HadooSh {
 			return completor.complete(myBuffer, cursor, clist);
 		}
 	}
+	
+	// Borrowed from Azkaban source
+	// https://github.com/azkaban/azkaban/blob/master/azkaban-common/src/java/azkaban/common/web/HdfsAvroFileViewer.java
+	private static DataFileStream<Object> getAvroDataStream(FileSystem fs, Path path) throws IOException {
+        GenericDatumReader<Object> avroReader = new GenericDatumReader<Object>();
+        InputStream hdfsInputStream = fs.open(path);
+        return new DataFileStream<Object>(hdfsInputStream, avroReader);
+
+    }
+
+    public static void displayFile(FileSystem fs,
+                            Path path,
+                            OutputStream outputStream,
+                            int startLine,
+                            int endLine) throws IOException {
+
+        DataFileStream<Object> avroDatastream = null;
+
+        try {
+            avroDatastream = getAvroDataStream(fs, path);
+            Schema schema = avroDatastream.getSchema();
+            DatumWriter<Object> avroWriter = new GenericDatumWriter<Object>(schema);
+
+            JsonGenerator g = new JsonFactory().createJsonGenerator(outputStream, JsonEncoding.UTF8);
+            g.useDefaultPrettyPrinter();
+            Encoder encoder = new JsonEncoder(schema, g);
+
+            int lineno = 1; // line number starts from 1
+            while(avroDatastream.hasNext() && lineno <= endLine) {
+                Object datum = avroDatastream.next();
+                if(lineno >= startLine) {
+                    String record = "\n\n Record " + lineno + ":\n";
+                    outputStream.write(record.getBytes("UTF-8"));
+                    avroWriter.write(datum, encoder);
+                    encoder.flush();
+                }
+                lineno++;
+            }
+        } catch(IOException e) {
+            outputStream.write(("Error in display avro file: " + e.getLocalizedMessage()).getBytes("UTF-8"));
+            throw e;
+        } finally {
+            avroDatastream.close();
+        }
+    }
 
 	private static class MatchingPrefixPathFilter implements PathFilter {
 		String _prefix;
