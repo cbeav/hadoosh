@@ -1,5 +1,5 @@
 HadooSh
--------
+=======
 
 Ever wanted to grep a file on HDFS and store the results locally?
 Now you can, with one simple command in HadooSh:
@@ -15,7 +15,7 @@ to local system commands, and both local and remote output. There are
 many bugs to be found, so please play nicely with it.
 
 Currently supported operations:
-===============================
+-------------------------------
  - ls [dir]
  - cd [dir]
  - pwd
@@ -31,12 +31,12 @@ Currently supported operations:
 
 
 Planned future actions:
-=======================
+-----------------------
  - cp
  - should probably put some limits on file sizes
 
 Known bugs:
-===========
+-----------
  - Tab completion fails when using ".."
 
 To use HadooSh, just copy the included jar to your Hadoop cluster's
