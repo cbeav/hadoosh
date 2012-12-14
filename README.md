@@ -43,7 +43,7 @@ To use HadooSh, just copy the included jar to your Hadoop cluster's
 gateway, make sure you've kinit'd if necessary, and run the following:
 
 ```bash
-wget https://github.com/cbeavz/hadoosh/raw/master/HadooSh.jar
+wget https://github.com/cbeav/hadoosh/raw/master/HadooSh.jar
 hadoop jar HadooSh.jar HadooSh
 ```
 
