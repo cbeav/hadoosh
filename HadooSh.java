@@ -1,18 +1,15 @@
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
-import java.io.ByteArrayOutputStream;
 import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PipedInputStream;
-import java.io.PipedOutputStream;
 import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
-import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -24,12 +21,10 @@ import org.apache.avro.io.DatumWriter;
 import org.apache.avro.io.Encoder;
 import org.apache.avro.io.JsonEncoder;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.PathFilter;
 import org.codehaus.jackson.JsonEncoding;
 import org.codehaus.jackson.JsonFactory;
 import org.codehaus.jackson.JsonGenerator;
@@ -44,7 +39,6 @@ public class HadooSh {
 	static FileSystem fs;
 	static Path p;
 	static Path home;
-	static String rootStr;
 	static Path root;
 
 	private final static boolean DEBUG = false;
@@ -56,11 +50,7 @@ public class HadooSh {
 
 		p = fs.getWorkingDirectory();
 		home = new Path(p.toString());
-
-		String homeStr = home.toString();
-		rootStr = homeStr.substring(0, homeStr.indexOf("/user/", 0));
-		root = new Path(rootStr);
-
+    root = new Path("/");
 		ConsoleReader reader = new ConsoleReader();
 		reader.setBellEnabled(false);
 		List completors = new LinkedList();
@@ -74,7 +64,7 @@ public class HadooSh {
 		PrintWriter out = new PrintWriter(System.out);
 		String line;
 
-		while ((line = reader.readLine(trimToLeaf(p.toString()) + " > ").trim()) != null) {
+		while ((line = reader.readLine(p.getName().toString() + " > ").trim()) != null) {
 			try {
 				PipedInputStream is;
 				if (line.equals("exit"))
@@ -301,11 +291,9 @@ public class HadooSh {
 
 	private static void pwd(String line, OutputStream os)
 			throws UnsupportedEncodingException, IOException {
-		println(os,
-				p.toString().substring(
-						p.toString().indexOf(rootStr) + rootStr.length()));
+		println(os, p.toString());
 	}
-	
+
 	public static void avrocat(String fullCommand, OutputStream os) throws IOException
 	{
 		String[] parts = fullCommand.split(" ");
@@ -371,7 +359,7 @@ public class HadooSh {
 
 		FileStatus[] stati = fs.listStatus(targetDir);
 		for (FileStatus f : stati) {
-			String s = trimToLeaf(f.getPath().toString());
+			String s = f.getPath().getName().toString();
 			println(os, f.isDir() ? s + "/" : s);
 		}
 	}
@@ -460,82 +448,32 @@ public class HadooSh {
 		}
 	}
 
-	public static String trimToLeaf(String path) {
-		String[] parts = path.split("/");
-		return parts[parts.length - 1];
-	}
-
 	private static class HDFSCompletor implements Completor {
-		private SimpleCompletorWithoutSpace completor;
-
-		public HDFSCompletor() {
-			completor = new SimpleCompletorWithoutSpace(new String[] {});
-		}
-
 		public int complete(final String buffer, final int cursor,
 				final List clist) {
-			String myBuffer = buffer == null ? "" : buffer;
-			int lastSlash = myBuffer.lastIndexOf('/');
-			String pathDir, pathCont;
-			try {
-				pathDir = myBuffer.substring(0, lastSlash);
-				pathCont = myBuffer.substring(lastSlash + 1, myBuffer.length());
-			} catch (Exception e) {
-				pathDir = "";
-				pathCont = myBuffer;
-			}
-
-			String dir;
-			if (myBuffer.startsWith("/")) {
-				dir = rootStr + "/";
-			} else {
-				dir = p.toString() + "/";
-			}
-
-			if (!pathDir.equals("") || myBuffer.equals("/")) {
-				String extra = pathDir;
-				if (myBuffer.startsWith("/"))
-					extra = extra.substring(1);
-				dir += extra + "/";
-			}
-
-			String prefix = dir;
-			if (!pathCont.equals("")) {
-				prefix += pathCont;
-			}
-
-			PathFilter pf = new MatchingPrefixPathFilter(prefix);
-
+			String myBuffer = (buffer == null ? "" : buffer)
+                      + "*"; // avoid empty path
+      final Path glob = new Path(myBuffer);
+      final Path parent = glob.getParent();
 			FileStatus[] completions;
 			try {
-				completions = fs.listStatus(new Path(dir), pf);
+				completions = glob.isAbsolute()
+          ? fs.globStatus(glob)
+          : fs.globStatus(new Path(p, glob));
 			} catch (IOException e) {
-				completions = null;
-				// TODO Auto-generated catch block
+				completions = new FileStatus[0];
 				e.printStackTrace();
 			}
 
-			String[] candidates = new String[completions.length];
-
 			for (int i = 0; i < completions.length; i++) {
-				candidates[i] = trimToLeaf(completions[i].getPath().toString());
-				if (!pathDir.equals("")) {
-					candidates[i] = pathDir + "/" + candidates[i];
-				} else if (myBuffer.startsWith("/")) {
-					candidates[i] = "/" + candidates[i];
-				}
-
-				if (completions[i].isDir())
-					candidates[i] += "/";
-				else
-					candidates[i] += " ";
+        clist.add(
+            new Path(parent, completions[i].getPath().getName()).toString()
+          + (completions[i].isDir() ? "/" : " "));
 			}
-
-			completor.setCandidateStrings(candidates);
-			return completor.complete(myBuffer, cursor, clist);
+      return clist.size() == 0 ? -1 : 0;
 		}
 	}
-	
+
 	// Borrowed from Azkaban source
 	// https://github.com/azkaban/azkaban/blob/master/azkaban-common/src/java/azkaban/common/web/HdfsAvroFileViewer.java
 	private static DataFileStream<Object> getAvroDataStream(FileSystem fs, Path path) throws IOException {
@@ -580,18 +518,4 @@ public class HadooSh {
             avroDatastream.close();
         }
     }
-
-	private static class MatchingPrefixPathFilter implements PathFilter {
-		String _prefix;
-
-		public MatchingPrefixPathFilter(String prefix) {
-			_prefix = prefix;
-		}
-
-		@Override
-		public boolean accept(Path p) {
-			return p.toString().startsWith(_prefix);
-		}
-	}
-
 }
