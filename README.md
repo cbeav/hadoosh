@@ -35,9 +35,6 @@ Planned future actions:
  - cp
  - should probably put some limits on file sizes
 
-Known bugs:
------------
- - Tab completion fails when using ".."
 
 To use HadooSh, just copy the included jar to your Hadoop cluster's
 gateway, make sure you've kinit'd if necessary, and run the following:
