@@ -25,6 +25,7 @@ import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.mapred.JobConf;
 import org.codehaus.jackson.JsonEncoding;
 import org.codehaus.jackson.JsonFactory;
 import org.codehaus.jackson.JsonGenerator;
@@ -32,10 +33,11 @@ import org.codehaus.jackson.JsonGenerator;
 import jline.ArgumentCompletor;
 import jline.Completor;
 import jline.ConsoleReader;
+import jline.FileNameCompletor;
 import jline.SimpleCompletor;
 
 public class HadooSh {
-	static Configuration config;
+	static JobConf config = new JobConf();
 	static FileSystem fs;
 	static Path p;
 	static Path home;
@@ -44,7 +46,6 @@ public class HadooSh {
 	private final static boolean DEBUG = false;
 
 	public static void main(String[] args) throws Exception {
-		config = new Configuration();
 		// config.set("fs.default.name", "hdfs://localhost:9000");
 		fs = FileSystem.get(config);
 
@@ -55,11 +56,21 @@ public class HadooSh {
 		reader.setBellEnabled(false);
 		List completors = new LinkedList();
 		String[] commandsList = new String[] { "cd", "ls", "pwd", "exit",
-				"cat", "head", "local", "rm", "mv", "avrocat" };
-		Completor fileCompletor = new HDFSCompletor();
+				"cat", "head", "rm", "mv", "avrocat" };
+		Completor hdfsCompletor = new HDFSCompletor();
 		completors.add(new SimpleCompletor(commandsList));
-		completors.add(fileCompletor);
+		completors.add(hdfsCompletor);
 		reader.addCompletor(new ArgumentCompletor(completors));
+
+    reader.addCompletor(
+      new ArgumentCompletor(
+        new Completor[] {
+          new SimpleCompletor(new String[] {"local"}),
+          new SimpleCompletor(commandsList),
+          new FileNameCompletor()
+        }
+      )
+    );
 
 		PrintWriter out = new PrintWriter(System.out);
 		String line;
@@ -134,7 +145,7 @@ public class HadooSh {
 						}
 						else if(remoteOut > 0)
 						{
-							FileSystem fs = FileSystem.get(new Configuration());
+							FileSystem fs = FileSystem.get(config);
 							Path outPath = getPath(outLoc);
 							FSDataOutputStream os = fs.create(outPath, true);
 							getCmdOutput(pipeBreaks[0], os);
@@ -192,7 +203,7 @@ public class HadooSh {
 	private static void dumpToHDFS(InputStream is, String loc)
 			throws IOException {
 		BufferedReader br = new BufferedReader(new InputStreamReader(is));
-		FileSystem fs = FileSystem.get(new Configuration());
+		FileSystem fs = FileSystem.get(config);
 		Path outPath = getPath(loc);
 		FSDataOutputStream os = fs.create(outPath, true);
 		
