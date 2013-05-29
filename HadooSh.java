@@ -20,12 +20,14 @@ import org.apache.avro.generic.GenericDatumWriter;
 import org.apache.avro.io.DatumWriter;
 import org.apache.avro.io.Encoder;
 import org.apache.avro.io.JsonEncoder;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.mapred.JobClient;
 import org.apache.hadoop.mapred.JobConf;
+import org.apache.hadoop.mapred.JobPriority;
+import org.apache.hadoop.mapred.JobStatus;
 import org.codehaus.jackson.JsonEncoding;
 import org.codehaus.jackson.JsonFactory;
 import org.codehaus.jackson.JsonGenerator;
@@ -34,20 +36,24 @@ import jline.ArgumentCompletor;
 import jline.Completor;
 import jline.ConsoleReader;
 import jline.FileNameCompletor;
+import jline.MultiCompletor;
+import jline.NullCompletor;
 import jline.SimpleCompletor;
 
 public class HadooSh {
-	static JobConf config = new JobConf();
-	static FileSystem fs;
-	static Path p;
-	static Path home;
-	static Path root;
+	private static final JobConf config = new JobConf();
+  private static JobClient jobClient;
+	private static FileSystem fs;
+	private static Path p;
+	private static Path home;
+	private static Path root;
 
 	private final static boolean DEBUG = false;
 
 	public static void main(String[] args) throws Exception {
 		// config.set("fs.default.name", "hdfs://localhost:9000");
 		fs = FileSystem.get(config);
+    jobClient = new JobClient(config);
 
 		p = fs.getWorkingDirectory();
 		home = new Path(p.toString());
@@ -60,17 +66,110 @@ public class HadooSh {
 		Completor hdfsCompletor = new HDFSCompletor();
 		completors.add(new SimpleCompletor(commandsList));
 		completors.add(hdfsCompletor);
-		reader.addCompletor(new ArgumentCompletor(completors));
 
-    reader.addCompletor(
+		Completor remoteFsCompletor = new ArgumentCompletor(completors);
+
+    Completor localFsCompletor =
       new ArgumentCompletor(
         new Completor[] {
           new SimpleCompletor(new String[] {"local"}),
           new SimpleCompletor(commandsList),
           new FileNameCompletor()
         }
-      )
-    );
+      );
+
+    final SimpleCompletor jobSimpleComletor =
+      new SimpleCompletor(new String[] {"job"});
+
+    Completor jobSKCompletor =
+      new ArgumentCompletor(
+        new Completor[] {
+          jobSimpleComletor,
+          new SimpleCompletor(
+            new String[] {
+              "-status",
+              "-kill"
+            }
+          ),
+          new JobCompletor(),
+          new NullCompletor()
+        }
+      );
+    Completor jobLsTTCompletor =
+      new ArgumentCompletor(
+        new Completor[] {
+          jobSimpleComletor,
+          new SimpleCompletor(
+            new String[] {
+              "-list-active-trackers",
+              "-list-blacklisted-trackers"
+            }
+          ),
+          new NullCompletor()
+        }
+      );
+    Completor jobLsCompletor =
+      new ArgumentCompletor(
+        new Completor[] {
+          jobSimpleComletor,
+          new SimpleCompletor(
+            new String[] {
+              "-list",
+            }
+          ),
+          new SimpleCompletor(
+            new String[] {
+              "all",
+            }
+          ),
+          new NullCompletor()
+        }
+      );
+
+    final JobPriority[] jpen = JobPriority.values();
+    final String[] jpstr = new String[jpen.length];
+    for (int i = 0; i < jpen.length; i++) {
+      jpstr[i] = jpen[i].name();
+    }
+    Completor jobPriorityCompletor =
+      new ArgumentCompletor(
+        new Completor[] {
+          jobSimpleComletor,
+          new SimpleCompletor(
+            new String[] {
+              "-set-priority",
+            }
+          ),
+          new JobCompletor(),
+          new SimpleCompletor(jpstr),
+          new NullCompletor()
+        }
+      );
+    Completor jobHistoryCompletor =
+      new ArgumentCompletor(
+        new Completor[] {
+          jobSimpleComletor,
+          new SimpleCompletor(
+            new String[] {
+              "-history",
+            }
+          ),
+          hdfsCompletor,
+          new NullCompletor()
+        }
+      );
+ 
+    final MultiCompletor topComletor = new MultiCompletor(
+      new Completor[] {
+        remoteFsCompletor, 
+        localFsCompletor,
+        jobSKCompletor,
+        jobLsTTCompletor,
+        jobLsCompletor,
+        jobPriorityCompletor,
+        jobHistoryCompletor});
+    
+    reader.addCompletor(topComletor);
 
 		PrintWriter out = new PrintWriter(System.out);
 		String line;
@@ -265,6 +364,8 @@ public class HadooSh {
 			mv(line, os);
 		else if(line.startsWith("avrocat"))
 			avrocat(line, os);
+    else if (line.startsWith("job"))
+      job(line, os);
 		else if (line.startsWith("local"))
 			sysExec(line.substring(line.indexOf("local") + "local".length()),
 					os);
@@ -459,6 +560,22 @@ public class HadooSh {
 		}
 	}
 
+  public static void job(String fullCommand, OutputStream os)
+    throws IOException
+  {
+    final String[] origargs = fullCommand.split(" ");
+    final String[] args = new String[origargs.length - 1];
+    System.arraycopy(origargs, 1, args, 0, args.length);
+    try {
+      jobClient.run(args);
+    } catch (Exception e) {
+      if (e instanceof IOException) {
+        throw (IOException)e;
+      }
+      throw new IOException(e);
+    }
+  }
+
 	private static class HDFSCompletor implements Completor {
 		public int complete(final String buffer, final int cursor,
 				final List clist) {
@@ -484,6 +601,30 @@ public class HadooSh {
       return clist.size() == 0 ? -1 : 0;
 		}
 	}
+
+  private static final class JobCompletor implements Completor {
+		public int complete(
+      final String buffer,
+      final int cursor,
+			final List clist)
+    {
+      try {
+        JobStatus[] jobs = jobClient.jobsToComplete();
+        String b = (buffer == null ? "" : buffer);
+        for (JobStatus j : jobs) {
+          final String jstr = j.getJobID().toString();
+          if (jstr.startsWith(b)) {
+            clist.add(jstr.length() == b.length()
+              ? jstr + " "
+              : jstr);
+          }
+        }
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
+      return clist.size() == 0 ? -1 : 0;
+    }
+  }
 
 	// Borrowed from Azkaban source
 	// https://github.com/azkaban/azkaban/blob/master/azkaban-common/src/java/azkaban/common/web/HdfsAvroFileViewer.java
