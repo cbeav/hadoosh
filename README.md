@@ -16,28 +16,41 @@ many bugs to be found, so please play nicely with it.
 
 Currently supported operations:
 -------------------------------
- - ls [dir]
  - cd [dir]
  - pwd
  - head [numLines]
- - cat [files]
- - mv <src> <dst>
- - rm  [files]
+ - all FsShell commands (hadoop fs), such as
+ -- cat [files]
+ -- mv <src> <dst>
+ -- rm  [files]
  - avrocat (prints the first ten records from avro file)
  - local (to execute one of the above commands on the local FS)
  - support for piping to local commands
  - use ">" to run command output to HDFS filesystem
  - use ">l" to run command output to local filesystem
+ - all JobClient commands (hadoop job) are accessible to by typing "job" after the prompt first
 
 
 Planned future actions:
 -----------------------
- - cp
  - should probably put some limits on file sizes
 
 Known bugs:
 -----------
- - Tab completion fails when using ".."
+
+Build HadooSh:
+--------------
+```bash
+git clone https://github.com/gerashegalov/hadoosh.git
+cd hadoosh
+mvn package
+```
+This builds HadooSh against Apache dependencies
+
+You can also use build HadooSh against MapR artifacts:
+```bash
+mvn package -Pmapr
+```
 
 To use HadooSh, just copy the included jar to your Hadoop cluster's
 gateway, make sure you've kinit'd if necessary, and run the following:
@@ -49,4 +62,4 @@ hadoop jar HadooSh.jar HadooSh
 
 Enjoy.
 
-**Authors:** Chris Beavers and Paul Hobbs
+**Authors:** Chris Beavers, Paul Hobbs, and Gera Shegalov
