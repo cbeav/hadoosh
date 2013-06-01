@@ -20,9 +20,9 @@ Currently supported operations:
  - pwd
  - head [numLines]
  - all FsShell commands (hadoop fs), such as
- -- cat [files]
- -- mv <src> <dst>
- -- rm  [files]
+     - cat [files]
+     - mv <src> <dst>
+     - rm  [files]
  - avrocat (prints the first ten records from avro file)
  - local (to execute one of the above commands on the local FS)
  - support for piping to local commands
