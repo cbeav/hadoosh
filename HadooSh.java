@@ -10,6 +10,7 @@ import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
+import java.net.URI;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -24,7 +25,12 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FsShell;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.mapred.JobClient;
+import org.apache.hadoop.mapred.JobConf;
+import org.apache.hadoop.mapred.JobPriority;
+import org.apache.hadoop.mapred.JobStatus;
 import org.codehaus.jackson.JsonEncoding;
 import org.codehaus.jackson.JsonFactory;
 import org.codehaus.jackson.JsonGenerator;
@@ -32,39 +38,253 @@ import org.codehaus.jackson.JsonGenerator;
 import jline.ArgumentCompletor;
 import jline.Completor;
 import jline.ConsoleReader;
+import jline.FileNameCompletor;
+import jline.MultiCompletor;
+import jline.NullCompletor;
 import jline.SimpleCompletor;
 
 public class HadooSh {
-	static Configuration config;
-	static FileSystem fs;
-	static Path p;
-	static Path home;
-	static Path root;
-
+	private static final JobConf config = new JobConf();
+  private static JobClient jobClient;
+	private static FileSystem fs;
+	private static Path home;
+  private static FsShell dfsShell;
+  private static URI defaultUri;
+  private static URI localURI;
 	private final static boolean DEBUG = false;
 
+  private static final String[] commonFsCmdList = new String[] {
+    "ls",                                                      // <path>]
+    "lsr",                                                     // <path>]
+    "du",                                                      // <path>]
+    "dus",                                                     // <path>]
+    "count",                                              // [-q] <path>]
+    "mv",                                                 // <src> <dst>]
+    "cp",                                                 // <src> <dst>]
+    "rm",                                        //  [-skipTrash] <path>]
+    "rmr",                                        // [-skipTrash] <path>]
+    "cat",                                                      // <src>]
+    "text",                                                     // <src>]
+    "mkdir",                                                   // <path>]
+    "touchz",                                                  // <path>]
+    "test",                                             // -[ezd] <path>]
+    "stat",                                           // [format] <path>]
+    "tail",                                               // [-f] <file>]
+    "chmod",                // [-R] <MODE[,MODE]... | OCTALMODE> PATH...]
+    "chown",                           // [-R] [OWNER][:[GROUP]] PATH...]
+    "chgrp"                                        // [-R] GROUP PATH...]
+  };
+
+  private static final String[] dfsCmdListNoArgs = new String[] {
+    "expunge"
+  };
+
+  private static final String[] dfsCmdListLocalRemote = new String[] {
+    "put",                                       // <localsrc> ... <dst>]
+    "copyFromLocal",                             // <localsrc> ... <dst>]
+    "moveFromLocal"                              // <localsrc> ... <dst>]
+  };
+
+  private static final String[] dfsCmdListRemoteLocal = new String[] {
+    "get",                       // [-ignoreCrc] [-crc] <src> <localdst>]
+    "getmerge",                              // <src> <localdst> [addnl]]
+    "copyToLocal",               // [-ignoreCrc] [-crc] <src> <localdst>]
+    "moveToLocal",                            // [-crc] <src> <localdst>]
+  };
+
+  private static final String[] dfsCmdListRemote = new String[] {
+    "setrep"                              // [-R] [-w] <rep> <path/file>]
+  };
+
+  private static final String[][] fsShellCmds = new String[][] {
+    commonFsCmdList,
+    dfsCmdListNoArgs,
+    dfsCmdListLocalRemote,
+    dfsCmdListRemoteLocal,
+    dfsCmdListRemote
+  };
+
 	public static void main(String[] args) throws Exception {
-		config = new Configuration();
 		// config.set("fs.default.name", "hdfs://localhost:9000");
 		fs = FileSystem.get(config);
+    defaultUri = FileSystem.getDefaultUri(config);
+    localURI = FileSystem.getLocal(config).getUri();
 
-		p = fs.getWorkingDirectory();
-		home = new Path(p.toString());
-    root = new Path("/");
+    dfsShell = new FsShell(config);
+    jobClient = new JobClient(config);
+		home = fs.getWorkingDirectory();
+
 		ConsoleReader reader = new ConsoleReader();
 		reader.setBellEnabled(false);
 		List completors = new LinkedList();
-		String[] commandsList = new String[] { "cd", "ls", "pwd", "exit",
-				"cat", "head", "local", "rm", "mv", "avrocat" };
-		Completor fileCompletor = new HDFSCompletor();
-		completors.add(new SimpleCompletor(commandsList));
-		completors.add(fileCompletor);
-		reader.addCompletor(new ArgumentCompletor(completors));
+		String[] commandsList = new String[] {
+      "cd",
+      "head",
+      "avrocat"
+    };
+
+		final Completor hdfsFileNameCompletor = new HDFSCompletor();
+    final Completor localFileNameCompletor = new FileNameCompletor();
+    final Completor nullCompletor = new NullCompletor();
+    final Completor jobCompletor = new JobCompletor();
+
+		final Completor remoteFsCompletor = new ArgumentCompletor(
+      new Completor[] {
+        new MultiCompletor(
+          new Completor[] {
+            new SimpleCompletor(commonFsCmdList),
+            new SimpleCompletor(dfsCmdListRemote),
+            new SimpleCompletor(commandsList)
+          }
+        ),
+        hdfsFileNameCompletor
+      }
+    );
+
+    final Completor localFsCompletor = new ArgumentCompletor(
+      new Completor[] {
+        new SimpleCompletor(new String[] {"local"}),
+        new SimpleCompletor(commonFsCmdList),
+        localFileNameCompletor
+      }
+    );
+
+    final Completor localRemoteCompletor = new ArgumentCompletor(
+      new Completor[] {
+        new SimpleCompletor(dfsCmdListLocalRemote),
+        localFileNameCompletor,
+        hdfsFileNameCompletor,
+        nullCompletor
+      }
+    );
+
+    final Completor remoteLocalCompletor = new ArgumentCompletor(
+      new Completor[] {
+        new SimpleCompletor(dfsCmdListRemoteLocal),
+        hdfsFileNameCompletor,
+        localFileNameCompletor,
+        nullCompletor
+      }
+    );
+
+    final SimpleCompletor jobSimpleComletor =
+      new SimpleCompletor(new String[] {"job"});
+
+    final Completor jobSKCompletor = new ArgumentCompletor(
+      new Completor[] {
+        jobSimpleComletor,
+        new SimpleCompletor(
+          new String[] {
+            "-status",
+            "-counter",
+            "-kill",
+            "-events"
+          }
+        ),
+        jobCompletor,
+        nullCompletor
+      }
+    );
+
+    final JobPriority[] jpen = JobPriority.values();
+    final String[] jpstr = new String[jpen.length];
+    for (int i = 0; i < jpen.length; i++) {
+      jpstr[i] = jpen[i].name();
+    }
+    final Completor jobPriorityCompletor = new ArgumentCompletor(
+      new Completor[] {
+        jobSimpleComletor,
+        new SimpleCompletor(
+          new String[] {
+            "-set-priority",
+          }
+        ),
+        jobCompletor,
+        new SimpleCompletor(jpstr),
+        nullCompletor
+      }
+    );
+
+    final Completor jobLsTTCompletor = new ArgumentCompletor(
+      new Completor[] {
+        jobSimpleComletor,
+        new SimpleCompletor(
+          new String[] {
+            "-list-active-trackers",
+            "-list-blacklisted-trackers"
+          }
+        ),
+        nullCompletor
+      }
+    );
+
+    final Completor jobLsCompletor = new ArgumentCompletor(
+      new Completor[] {
+        jobSimpleComletor,
+        new SimpleCompletor(
+          new String[] {
+            "-list",
+          }
+        ),
+        new SimpleCompletor(
+          new String[] {
+            "all",
+          }
+        ),
+        nullCompletor
+      }
+    );
+
+
+    final Completor jobHistoryCompletor = new ArgumentCompletor(
+      new Completor[] {
+        jobSimpleComletor,
+        new SimpleCompletor(
+          new String[] {
+            "-history",
+          }
+        ),
+        hdfsFileNameCompletor,
+        nullCompletor
+      }
+    );
+
+    final Completor jobKillTaskCompletor = new ArgumentCompletor(
+      new Completor[] {
+        jobSimpleComletor,
+        new SimpleCompletor(
+          new String[] {
+            "-kill-task",
+            "-fail-task"
+          }
+        ),
+        nullCompletor
+      }
+    );
+
+    final MultiCompletor topComletor = new MultiCompletor(
+      new Completor[] {
+        new SimpleCompletor(new String[] {"pwd","exit"}),
+        new SimpleCompletor(dfsCmdListNoArgs),
+        remoteFsCompletor,
+        localFsCompletor,
+        remoteLocalCompletor,
+        localRemoteCompletor,
+        jobSKCompletor,
+        jobLsTTCompletor,
+        jobLsCompletor,
+        jobPriorityCompletor,
+        jobHistoryCompletor,
+        jobKillTaskCompletor
+      }
+    );
+
+    reader.addCompletor(topComletor);
 
 		PrintWriter out = new PrintWriter(System.out);
 		String line;
 
-		while ((line = reader.readLine(p.getName().toString() + " > ").trim()) != null) {
+		while ((line = reader.readLine(fs.getWorkingDirectory().getName() + " > ").trim()) != null) {
 			try {
 				PipedInputStream is;
 				if (line.equals("exit"))
@@ -134,7 +354,7 @@ public class HadooSh {
 						}
 						else if(remoteOut > 0)
 						{
-							FileSystem fs = FileSystem.get(new Configuration());
+							FileSystem fs = FileSystem.get(config);
 							Path outPath = getPath(outLoc);
 							FSDataOutputStream os = fs.create(outPath, true);
 							getCmdOutput(pipeBreaks[0], os);
@@ -192,7 +412,7 @@ public class HadooSh {
 	private static void dumpToHDFS(InputStream is, String loc)
 			throws IOException {
 		BufferedReader br = new BufferedReader(new InputStreamReader(is));
-		FileSystem fs = FileSystem.get(new Configuration());
+		FileSystem fs = FileSystem.get(config);
 		Path outPath = getPath(loc);
 		FSDataOutputStream os = fs.create(outPath, true);
 		
@@ -225,7 +445,7 @@ public class HadooSh {
 	
 	private static Path getPath(String input)
 	{
-		return input.startsWith("/") ? new Path(input) : new Path(p, input);
+		return new Path(input);
 	}
 	
 	private static String getLocalPath(String input)
@@ -236,27 +456,44 @@ public class HadooSh {
 	private static void getCmdOutput(String cmd, OutputStream os)
 			throws IOException, InterruptedException {
 
-		String line = cmd;
+    final boolean isLocal = cmd.startsWith("local");
+    int largIndex = "local ".length();
+    if (isLocal) {
+      FileSystem.setDefaultUri(config, localURI);
+      for (int i = largIndex; i < cmd.length(); i++) {
+        if (cmd.charAt(i) != ' ') {
+          largIndex = i;
+          break;
+        }
+      }
+    } else {
+      FileSystem.setDefaultUri(config, defaultUri);
+    }
 
-		if (line.startsWith("ls"))
-			ls(line, os);
+		String line = isLocal
+      ? cmd.substring(largIndex, cmd.length())
+      : cmd;
+
+    boolean isFsShellCmd = false;
+    // TODO put into a tree for O(logN) lookup if big
+    for (int i = 0; !isFsShellCmd && i < fsShellCmds.length; i++) {
+      for (int j = 0; !isFsShellCmd && j < fsShellCmds[i].length; j++) {
+        isFsShellCmd = line.startsWith(fsShellCmds[i][j]);
+      }
+    }
+
+		if (isFsShellCmd)
+			execFsShell(line, os);
 		else if (line.startsWith("cd"))
 			cd(line, os);
-		else if (line.startsWith("cat"))
-			cat(line, os);
 		else if (line.startsWith("head"))
 			head(line, os);
 		else if (line.startsWith("pwd"))
 			pwd(line, os);
-		else if(line.startsWith("rm"))
-			rm(line, os);
-		else if(line.startsWith("mv"))
-			mv(line, os);
 		else if(line.startsWith("avrocat"))
 			avrocat(line, os);
-		else if (line.startsWith("local"))
-			sysExec(line.substring(line.indexOf("local") + "local".length()),
-					os);
+    else if (line.startsWith("job"))
+      job(line, os);
 		else
 			sysExec(line, os);
 	}
@@ -291,7 +528,7 @@ public class HadooSh {
 
 	private static void pwd(String line, OutputStream os)
 			throws UnsupportedEncodingException, IOException {
-		println(os, p.toString());
+		println(os, fs.getWorkingDirectory().toString());
 	}
 
 	public static void avrocat(String fullCommand, OutputStream os) throws IOException
@@ -344,24 +581,26 @@ public class HadooSh {
 		}
 	}
 
-	public static void ls(String fullCommand, OutputStream os)
+	public static void execFsShell(String fullCommand, OutputStream os)
 			throws IOException {
+    final PrintStream oldout = System.out;
 		String[] parts = fullCommand.split(" ");
-		Path targetDir = null;
-		if (parts.length > 2) {
-			println(os, "error, too many directories");
-			return;
-		} else if (parts.length == 1)
-			targetDir = p;
-		else {
-			targetDir = new Path(parts[1]);
-		}
-
-		FileStatus[] stati = fs.listStatus(targetDir);
-		for (FileStatus f : stati) {
-			String s = f.getPath().getName().toString();
-			println(os, f.isDir() ? s + "/" : s);
-		}
+    parts[0] = "-" + parts[0];
+    for (int i = 1; i < parts.length; i++) {
+      parts[i] = new Path(parts[i]).toString();
+    }
+    try {
+      System.setOut(new PrintStream(os));
+      dfsShell.run(parts);
+      System.out.flush();
+    } catch (Throwable e) {
+      if (e instanceof IOException) {
+        throw (IOException)e;
+      }
+      throw new IOException(e);
+    } finally {
+      System.setOut(oldout);
+    }
 	}
 
 	public static void cat(String fullCommand, OutputStream os)
@@ -372,7 +611,7 @@ public class HadooSh {
 			return;
 		} else {
 			for (int i = 1; i < parts.length; i++) {
-				Path f = new Path(p.toString(), parts[i]);
+				Path f = new Path(parts[i]);
 				if (fs.exists(f)) {
 					BufferedReader br = new BufferedReader(
 							new InputStreamReader(fs.open(f)));
@@ -403,9 +642,9 @@ public class HadooSh {
 				Path f;
 				if (parts.length == 3) {
 					numLines = Integer.parseInt(parts[1]);
-					f = new Path(p.toString(), parts[2]);
+					f = new Path(parts[2]);
 				} else
-					f = new Path(p.toString(), parts[1]);
+					f = new Path(parts[1]);
 				if (fs.exists(f)) {
 					BufferedReader br = new BufferedReader(
 							new InputStreamReader(fs.open(f)));
@@ -432,21 +671,31 @@ public class HadooSh {
 		if (parts.length > 2)
 			println(os, "error, too many directories");
 		else if (parts.length == 1)
-			p = new Path(home.toString());
-		else if (parts[1].startsWith("/")) {
-			Path targetPath = new Path(root, parts[1]);
-			if (fs.exists(targetPath))
-				p = targetPath;
-			else
-				println(os, "path " + targetPath.toString() + " does not exist");
-		} else {
-			Path targetPath = new Path(p, parts[1]);
-			if (fs.exists(targetPath))
-				p = targetPath;
-			else
-				println(os, "path " + targetPath.toString() + " does not exist");
-		}
+      fs.setWorkingDirectory(home);
+    else {
+      fs.setWorkingDirectory(new Path(parts[1]));
+    }
 	}
+
+  public static void job(String fullCommand, OutputStream os)
+    throws IOException
+  {
+    final PrintStream oldout = System.out;
+    final int argIndex = fullCommand.indexOf("-");
+    try {
+      final String[] args = fullCommand.substring(argIndex, fullCommand.length()).split(" ");
+      System.setOut(new PrintStream(os));
+      jobClient.run(args);
+      System.out.flush();
+    } catch (Throwable e) {
+      if (e instanceof IOException) {
+        throw (IOException)e;
+      }
+      throw new IOException(e);
+    } finally {
+      System.setOut(oldout);
+    }
+  }
 
 	private static class HDFSCompletor implements Completor {
 		public int complete(final String buffer, final int cursor,
@@ -457,9 +706,7 @@ public class HadooSh {
       final Path parent = glob.getParent();
 			FileStatus[] completions;
 			try {
-				completions = glob.isAbsolute()
-          ? fs.globStatus(glob)
-          : fs.globStatus(new Path(p, glob));
+				completions = fs.globStatus(glob);
 			} catch (IOException e) {
 				completions = new FileStatus[0];
 				e.printStackTrace();
@@ -473,6 +720,32 @@ public class HadooSh {
       return clist.size() == 0 ? -1 : 0;
 		}
 	}
+
+  private static final class JobCompletor implements Completor {
+		public int complete(
+      final String buffer,
+      final int cursor,
+			final List clist)
+    {
+      try {
+        JobStatus[] jobs = jobClient.jobsToComplete();
+        if (jobs != null) {
+          String b = (buffer == null ? "" : buffer);
+          for (JobStatus j : jobs) {
+            final String jstr = j.getJobID().toString();
+            if (jstr.startsWith(b)) {
+              clist.add(jstr.length() == b.length()
+                ? jstr + " "
+                : jstr);
+            }
+          }
+        }
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
+      return clist.size() == 0 ? -1 : 0;
+    }
+  }
 
 	// Borrowed from Azkaban source
 	// https://github.com/azkaban/azkaban/blob/master/azkaban-common/src/java/azkaban/common/web/HdfsAvroFileViewer.java
