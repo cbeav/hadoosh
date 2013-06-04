@@ -21,7 +21,7 @@ Currently supported operations:
  - head [numLines]
  - all FsShell commands (hadoop fs), such as
      - cat [files]
-     - mv <src> <dst>
+     - mv \<src\> \<dst\>
      - rm  [files]
  - avrocat (prints the first ten records from avro file)
  - local (to execute one of the above commands on the local FS)
@@ -29,7 +29,7 @@ Currently supported operations:
  - use ">" to run command output to HDFS filesystem
  - use ">l" to run command output to local filesystem
  - all JobClient commands (hadoop job) are accessible to by typing "job" after the prompt first
- - runjar <localjar> ...  (hadoop jar)
+ - runjar \<localjar\> ...  (hadoop jar)
 
 Planned future actions:
 -----------------------
