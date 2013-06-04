@@ -1,5 +1,6 @@
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.File;
 import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -11,6 +12,9 @@ import java.io.PrintWriter;
 import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
 import java.net.URI;
+import java.security.Permission;
+
+import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -31,6 +35,8 @@ import org.apache.hadoop.mapred.JobClient;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.JobPriority;
 import org.apache.hadoop.mapred.JobStatus;
+import org.apache.hadoop.util.RunJar;
+
 import org.codehaus.jackson.JsonEncoding;
 import org.codehaus.jackson.JsonFactory;
 import org.codehaus.jackson.JsonGenerator;
@@ -52,6 +58,24 @@ public class HadooSh {
   private static URI defaultUri;
   private static URI localURI;
 	private final static boolean DEBUG = false;
+
+  // Disallow RunJar call System.exit [http://stackoverflow.com/questions/5401281/preventing-system-exit-from-api]
+  private static class ExitTrappedException extends SecurityException { }
+
+  private static void forbidSystemExitCall() {
+    final SecurityManager securityManager = new SecurityManager() {
+      public void checkPermission(Permission permission ) {
+        if(permission.getName().startsWith("exitVM")) {
+          throw new ExitTrappedException();
+        }
+      }
+    };
+    System.setSecurityManager( securityManager ) ;
+  }
+
+  private static void enableSystemExitCall() {
+    System.setSecurityManager(null);
+  }
 
   private static final String[] commonFsCmdList = new String[] {
     "ls",                                                      // <path>]
@@ -105,6 +129,7 @@ public class HadooSh {
   };
 
 	public static void main(String[] args) throws Exception {
+    forbidSystemExitCall();
 		// config.set("fs.default.name", "hdfs://localhost:9000");
 		fs = FileSystem.get(config);
     defaultUri = FileSystem.getDefaultUri(config);
@@ -127,6 +152,32 @@ public class HadooSh {
     final Completor localFileNameCompletor = new FileNameCompletor();
     final Completor nullCompletor = new NullCompletor();
     final Completor jobCompletor = new JobCompletor();
+    final Completor localJarCompletor = new FileNameCompletor() {
+      public int matchFiles(
+        String buffer,
+        String translated,
+        File[] entries,
+        List clist)
+      {
+        if (entries == null) return -1;
+
+        for (int i = 0; i < entries.length; i++) {
+          String name = entries[i].getName();
+          if ((   entries[i].isDirectory()
+               || name.endsWith(".jar"))
+           && entries[i].getAbsolutePath().startsWith(translated))
+          {
+            name += (entries[i].isDirectory() ? File.separator : " ");
+            clist.add(name);
+          }
+        }
+        if (clist.size() > 0) {
+          final int index = buffer.lastIndexOf(File.separator);
+          return index + File.separator.length();
+        }
+        return -1;
+      }
+    };
 
 		final Completor remoteFsCompletor = new ArgumentCompletor(
       new Completor[] {
@@ -262,6 +313,14 @@ public class HadooSh {
       }
     );
 
+    final Completor runJarCompletor = new ArgumentCompletor(
+      new Completor[] {
+        new SimpleCompletor(new String[] { "runjar" }),
+        localJarCompletor,
+        nullCompletor
+      }
+    );
+
     final MultiCompletor topComletor = new MultiCompletor(
       new Completor[] {
         new SimpleCompletor(new String[] {"pwd","exit"}),
@@ -275,7 +334,8 @@ public class HadooSh {
         jobLsCompletor,
         jobPriorityCompletor,
         jobHistoryCompletor,
-        jobKillTaskCompletor
+        jobKillTaskCompletor,
+        runJarCompletor
       }
     );
 
@@ -494,6 +554,8 @@ public class HadooSh {
 			avrocat(line, os);
     else if (line.startsWith("job"))
       job(line, os);
+    else if (line.startsWith("runjar"))
+      runjar(line, os);
 		else
 			sysExec(line, os);
 	}
@@ -683,10 +745,46 @@ public class HadooSh {
     final PrintStream oldout = System.out;
     final int argIndex = fullCommand.indexOf("-");
     try {
-      final String[] args = fullCommand.substring(argIndex, fullCommand.length()).split(" ");
+      final String[] args = argIndex >= 0
+        ? fullCommand.substring(argIndex, fullCommand.length()).split(" ")
+        : new String[0];
       System.setOut(new PrintStream(os));
       jobClient.run(args);
       System.out.flush();
+    } catch (Throwable e) {
+      if (e instanceof IOException) {
+        throw (IOException)e;
+      }
+      throw new IOException(e);
+    } finally {
+      System.setOut(oldout);
+    }
+  }
+
+  public static void runjar(String fullCommand, OutputStream os)
+    throws IOException
+  {
+    final PrintStream oldout = System.out;
+    int argIndex = -1;
+    for (int i = "runjar".length(); i < fullCommand.length(); i++) {
+      if (!Character.isWhitespace(fullCommand.charAt(i))) {
+        argIndex = i;
+        break;
+      }
+    }
+
+    try {
+      final String[] args = argIndex >= 0
+        ? fullCommand.substring(argIndex, fullCommand.length()).split(" ")
+        : new String[0];
+
+      System.setOut(new PrintStream(os));
+      RunJar.main(args);
+      System.out.flush();
+    } catch (ExitTrappedException e) {
+      //
+      // intentionally swallow
+      //
     } catch (Throwable e) {
       if (e instanceof IOException) {
         throw (IOException)e;

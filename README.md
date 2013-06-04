@@ -29,7 +29,7 @@ Currently supported operations:
  - use ">" to run command output to HDFS filesystem
  - use ">l" to run command output to local filesystem
  - all JobClient commands (hadoop job) are accessible to by typing "job" after the prompt first
-
+ - runjar <localjar> ...  (hadoop jar)
 
 Planned future actions:
 -----------------------
