@@ -33,8 +33,11 @@ import org.apache.hadoop.fs.FsShell;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.mapred.JobClient;
 import org.apache.hadoop.mapred.JobConf;
+import org.apache.hadoop.mapred.JobID;
 import org.apache.hadoop.mapred.JobPriority;
 import org.apache.hadoop.mapred.JobStatus;
+import org.apache.hadoop.mapred.TaskAttemptID;
+import org.apache.hadoop.mapred.TaskReport;
 import org.apache.hadoop.util.RunJar;
 
 import org.codehaus.jackson.JsonEncoding;
@@ -151,7 +154,8 @@ public class HadooSh {
 		final Completor hdfsFileNameCompletor = new HDFSCompletor();
     final Completor localFileNameCompletor = new FileNameCompletor();
     final Completor nullCompletor = new NullCompletor();
-    final Completor jobCompletor = new JobCompletor();
+    final Completor jobIdCompletor = new JobIdCompletor();
+    final Completor taskIdCompletor = new TaskIdCompletor();
     final Completor localJarCompletor = new FileNameCompletor() {
       public int matchFiles(
         String buffer,
@@ -232,7 +236,7 @@ public class HadooSh {
             "-events"
           }
         ),
-        jobCompletor,
+        jobIdCompletor,
         nullCompletor
       }
     );
@@ -250,7 +254,7 @@ public class HadooSh {
             "-set-priority",
           }
         ),
-        jobCompletor,
+        jobIdCompletor,
         new SimpleCompletor(jpstr),
         nullCompletor
       }
@@ -309,6 +313,7 @@ public class HadooSh {
             "-fail-task"
           }
         ),
+        taskIdCompletor,
         nullCompletor
       }
     );
@@ -515,7 +520,6 @@ public class HadooSh {
 
 	private static void getCmdOutput(String cmd, OutputStream os)
 			throws IOException, InterruptedException {
-
     final boolean isLocal = cmd.startsWith("local");
     int largIndex = "local ".length();
     if (isLocal) {
@@ -819,7 +823,7 @@ public class HadooSh {
 		}
 	}
 
-  private static final class JobCompletor implements Completor {
+  private static final class JobIdCompletor implements Completor {
 		public int complete(
       final String buffer,
       final int cursor,
@@ -835,6 +839,43 @@ public class HadooSh {
               clist.add(jstr.length() == b.length()
                 ? jstr + " "
                 : jstr);
+            }
+          }
+        }
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
+      return clist.size() == 0 ? -1 : 0;
+    }
+  }
+
+  private static final class TaskIdCompletor implements Completor {
+		public int complete(
+      final String buffer,
+      final int cursor,
+			final List clist)
+    {
+      try {
+        JobStatus[] jobs = jobClient.jobsToComplete();
+        if (jobs != null) {
+          String b = (buffer == null ? "" : buffer);
+          for (JobStatus j : jobs) {
+            final JobID jid = j.getJobID();
+            final TaskReport[][] taskReports = new TaskReport[][] {
+              jobClient.getMapTaskReports(jid),
+              jobClient.getReduceTaskReports(jid)
+            };
+            for (TaskReport[] reps : taskReports) {
+              for (TaskReport tr : reps) {
+                for (TaskAttemptID tid : tr.getRunningTaskAttempts()) {
+                  final String s = tid.toString();
+                  if (s.startsWith(b)) {
+                    clist.add(s.length() == b.length()
+                      ? s + " "
+                      : s);
+                  }
+                }
+              }
             }
           }
         }
