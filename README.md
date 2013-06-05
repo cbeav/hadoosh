@@ -35,6 +35,13 @@ Planned future actions:
 -----------------------
  - should probably put some limits on file sizes
 
+Known bugs:
+-----------
+- piped commands that contain quotes such as
+```bash
+cat file | cut -d" " -f 1
+```
+
 Build HadooSh:
 --------------
 ```bash
@@ -49,12 +56,21 @@ You can also use build HadooSh against MapR artifacts:
 mvn package -Pmapr
 ```
 
+Executing HadooSh:
+------------------
 To use HadooSh, just copy the included jar to your Hadoop cluster's
 gateway, make sure you've kinit'd if necessary, and run the following:
 
 ```bash
 wget https://github.com/cbeav/hadoosh/raw/master/HadooSh.jar
 hadoop jar HadooSh.jar HadooSh
+```
+
+To run HadooSh with Maven:
+```bash
+# symlink hadoop conf
+ln -s ${HADOOP_HOME}/conf
+mvn clean compile exec:exec -Dexec.executable=java -Dexec.args="-classpath %classpath HadooSh"
 ```
 
 Enjoy.
