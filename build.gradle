@@ -27,7 +27,7 @@ sourceSets {
 }
 
 dependencies {
-  provided("org.apache.hadoop:hadoop-core:${hadoopVersion}") { transitive = false }
+  provided("org.apache.hadoop:hadoop-core:${hadoopVersion}") { transitive = true }
   compile("org.apache.avro:avro:${avroVersion}") { transitive = true }
   compile("jline:jline:${jlineVersion}") { transitive = false }
 }
