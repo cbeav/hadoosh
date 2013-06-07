@@ -139,7 +139,6 @@ public class HadooSh {
     localURI = FileSystem.getLocal(config).getUri();
 
     dfsShell = new FsShell(config);
-    jobClient = new JobClient(config);
 		home = fs.getWorkingDirectory();
 
 		ConsoleReader reader = new ConsoleReader();
@@ -753,7 +752,7 @@ public class HadooSh {
         ? fullCommand.substring(argIndex, fullCommand.length()).split(" ")
         : new String[0];
       System.setOut(new PrintStream(os));
-      jobClient.run(args);
+      getJobClient().run(args);
       System.out.flush();
     } catch (Throwable e) {
       if (e instanceof IOException) {
@@ -830,7 +829,7 @@ public class HadooSh {
 			final List clist)
     {
       try {
-        JobStatus[] jobs = jobClient.jobsToComplete();
+        JobStatus[] jobs = getJobClient().jobsToComplete();
         if (jobs != null) {
           String b = (buffer == null ? "" : buffer);
           for (JobStatus j : jobs) {
@@ -856,14 +855,15 @@ public class HadooSh {
 			final List clist)
     {
       try {
-        JobStatus[] jobs = jobClient.jobsToComplete();
+        final JobClient jc = getJobClient();
+        JobStatus[] jobs = jc.jobsToComplete();
         if (jobs != null) {
           String b = (buffer == null ? "" : buffer);
           for (JobStatus j : jobs) {
             final JobID jid = j.getJobID();
             final TaskReport[][] taskReports = new TaskReport[][] {
-              jobClient.getMapTaskReports(jid),
-              jobClient.getReduceTaskReports(jid)
+              jc.getMapTaskReports(jid),
+              jc.getReduceTaskReports(jid)
             };
             for (TaskReport[] reps : taskReports) {
               for (TaskReport tr : reps) {
@@ -930,4 +930,11 @@ public class HadooSh {
             avroDatastream.close();
         }
     }
+
+  private static JobClient getJobClient() throws IOException {
+    if (jobClient == null) {
+      jobClient = new JobClient(config);
+    }
+    return jobClient;
+  }
 }
