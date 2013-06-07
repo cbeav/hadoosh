@@ -25,6 +25,8 @@ import org.apache.avro.generic.GenericDatumWriter;
 import org.apache.avro.io.DatumWriter;
 import org.apache.avro.io.Encoder;
 import org.apache.avro.io.JsonEncoder;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
@@ -53,6 +55,8 @@ import jline.NullCompletor;
 import jline.SimpleCompletor;
 
 public class HadooSh {
+  private static final Log LOG = LogFactory.getLog(HadooSh.class);
+
 	private static final JobConf config = new JobConf();
   private static JobClient jobClient;
 	private static FileSystem fs;
@@ -136,6 +140,7 @@ public class HadooSh {
 		// config.set("fs.default.name", "hdfs://localhost:9000");
 		fs = FileSystem.get(config);
     defaultUri = FileSystem.getDefaultUri(config);
+    LOG.info("Using default filesystem: " + defaultUri);
     localURI = FileSystem.getLocal(config).getUri();
 
     dfsShell = new FsShell(config);
@@ -321,7 +326,7 @@ public class HadooSh {
       new Completor[] {
         new SimpleCompletor(new String[] { "runjar" }),
         localJarCompletor,
-        nullCompletor
+        hdfsFileNameCompletor
       }
     );
 
@@ -430,14 +435,8 @@ public class HadooSh {
 
 				}
 				out.flush();
-			} catch (Exception e) {
-				if (DEBUG)
-					e.printStackTrace();
-				System.out.println("command not found");
-			} catch (Throwable e) {
-				if (DEBUG)
-					e.printStackTrace();
-				System.out.println();
+			} catch (Throwable t) {
+				LOG.error("command failed", t);
 			}
 		}
 	}
@@ -723,9 +722,8 @@ public class HadooSh {
 				} else {
 					println(os, "error, no such file");
 				}
-			} catch (Exception e) {
-				e.printStackTrace();
-				println(os, "error, usage: head [numLines] file");
+			} catch (Throwable e) {
+				LOG.error("error, usage: head [numLines] file", e);
 			}
 		}
 	}
@@ -810,7 +808,7 @@ public class HadooSh {
 				completions = fs.globStatus(glob);
 			} catch (IOException e) {
 				completions = new FileStatus[0];
-				e.printStackTrace();
+				LOG.error("Unable to list: " + glob, e);
 			}
 
 			for (int i = 0; i < completions.length; i++) {
@@ -818,7 +816,15 @@ public class HadooSh {
             new Path(parent, completions[i].getPath().getName()).toString()
           + (completions[i].isDir() ? "/" : " "));
 			}
-      return clist.size() == 0 ? -1 : 0;
+
+      // pretend we are making a completion when this is not hdfs
+      // such that jline invokes us again on a new arg.
+      //
+      if (clist.size() == 0) {
+        clist.add("");
+        return myBuffer.length();
+      }
+      return 0;
 		}
 	}
 
@@ -842,7 +848,7 @@ public class HadooSh {
           }
         }
       } catch (IOException e) {
-        e.printStackTrace();
+        LOG.error("Unable to list jobs",  e);
       }
       return clist.size() == 0 ? -1 : 0;
     }
@@ -880,7 +886,7 @@ public class HadooSh {
           }
         }
       } catch (IOException e) {
-        e.printStackTrace();
+        LOG.error("Unable to list running tasks: ", e);
       }
       return clist.size() == 0 ? -1 : 0;
     }
