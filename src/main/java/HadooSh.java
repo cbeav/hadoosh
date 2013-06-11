@@ -158,7 +158,8 @@ public class HadooSh {
 		final Completor hdfsFileNameCompletor = new HDFSCompletor();
     final Completor localFileNameCompletor = new FileNameCompletor();
     final Completor nullCompletor = new NullCompletor();
-    final Completor jobIdCompletor = new JobIdCompletor();
+    final Completor runningJobIdCompletor = new JobIdCompletor(true);
+    final Completor allJobIdCompletor = new JobIdCompletor(false);
     final Completor taskIdCompletor = new TaskIdCompletor();
     final Completor localJarCompletor = new FileNameCompletor() {
       public int matchFiles(
@@ -229,18 +230,30 @@ public class HadooSh {
     final SimpleCompletor jobSimpleComletor =
       new SimpleCompletor(new String[] {"job"});
 
-    final Completor jobSKCompletor = new ArgumentCompletor(
+    final Completor jobSCECompletor = new ArgumentCompletor(
       new Completor[] {
         jobSimpleComletor,
         new SimpleCompletor(
           new String[] {
             "-status",
             "-counter",
-            "-kill",
             "-events"
           }
         ),
-        jobIdCompletor,
+        allJobIdCompletor,
+        nullCompletor
+      }
+    );
+
+    final Completor jobKillCompletor = new ArgumentCompletor(
+      new Completor[] {
+        jobSimpleComletor,
+        new SimpleCompletor(
+          new String[] {
+            "-kill",
+          }
+        ),
+        runningJobIdCompletor,
         nullCompletor
       }
     );
@@ -258,7 +271,7 @@ public class HadooSh {
             "-set-priority",
           }
         ),
-        jobIdCompletor,
+        runningJobIdCompletor,
         new SimpleCompletor(jpstr),
         nullCompletor
       }
@@ -293,7 +306,6 @@ public class HadooSh {
         nullCompletor
       }
     );
-
 
     final Completor jobHistoryCompletor = new ArgumentCompletor(
       new Completor[] {
@@ -332,13 +344,14 @@ public class HadooSh {
 
     final MultiCompletor topComletor = new MultiCompletor(
       new Completor[] {
-        new SimpleCompletor(new String[] {"pwd","exit"}),
+        new SimpleCompletor(new String[] {"pwd", "exit"}),
         new SimpleCompletor(dfsCmdListNoArgs),
         remoteFsCompletor,
         localFsCompletor,
         remoteLocalCompletor,
         localRemoteCompletor,
-        jobSKCompletor,
+        jobSCECompletor,
+        jobKillCompletor,
         jobLsTTCompletor,
         jobLsCompletor,
         jobPriorityCompletor,
@@ -439,6 +452,9 @@ public class HadooSh {
 				LOG.error("command failed", t);
 			}
 		}
+    if (jobClient != null) {
+      jobClient.close();
+    }
 	}
 
 	private static void dumpToOS(InputStream is, OutputStream os)
@@ -829,13 +845,22 @@ public class HadooSh {
 	}
 
   private static final class JobIdCompletor implements Completor {
-		public int complete(
+    private final boolean activeOnly;
+    private JobIdCompletor(boolean activeOnly) {
+      this.activeOnly = activeOnly;
+    }
+
+    public int complete(
       final String buffer,
       final int cursor,
 			final List clist)
     {
       try {
-        JobStatus[] jobs = getJobClient().jobsToComplete();
+        final JobClient jc = getJobClient();
+        JobStatus[] jobs = activeOnly
+          ? jc.jobsToComplete()
+          : jc.getAllJobs();
+
         if (jobs != null) {
           String b = (buffer == null ? "" : buffer);
           for (JobStatus j : jobs) {
