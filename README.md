@@ -31,16 +31,17 @@ Currently supported operations:
  - all JobClient commands (hadoop job) are accessible to by typing "job" after the prompt first
  - runjar \<localjar\> ...  (hadoop jar)
  - tlog -job \<jobid\> [-taskpattern taskglob] [-hostpattern hostglob]
-
-     Show all logs for a job:
+    
+    ```bash
+     # Show all logs for a job:
      tlog -job job_201306131712_0004
 
-     Show all mapper logs for a job:
+     # Show all mapper logs for a job:
      tlog -job job_201306131712_0004 -taskpattern *_m_*
 
-     grep logs for job tasks run on certain nodes
+     # grep logs for job tasks run on certain nodes
      tlog -job job_201306131712_0004 -hostpattern *.rack.company.com | grep needle
-
+     ```
 
 Planned future actions:
 -----------------------
