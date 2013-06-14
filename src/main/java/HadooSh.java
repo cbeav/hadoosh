@@ -11,10 +11,15 @@ import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+
 import java.net.URI;
+import java.net.URL;
+import java.net.URLConnection;
 import java.security.Permission;
 
-import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -32,13 +37,16 @@ import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FsShell;
+import org.apache.hadoop.fs.GlobPattern;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.mapred.JobClient;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.JobID;
 import org.apache.hadoop.mapred.JobPriority;
 import org.apache.hadoop.mapred.JobStatus;
 import org.apache.hadoop.mapred.TaskAttemptID;
+import org.apache.hadoop.mapred.TaskCompletionEvent;
 import org.apache.hadoop.mapred.TaskReport;
 import org.apache.hadoop.util.RunJar;
 
@@ -59,6 +67,8 @@ public class HadooSh {
 
 	private static final JobConf config = new JobConf();
   private static JobClient jobClient;
+  private static Object jsp; // JobSubmissionProtocol
+  private static Method gtce;
 	private static FileSystem fs;
 	private static Path home;
   private static FsShell dfsShell;
@@ -342,6 +352,15 @@ public class HadooSh {
       }
     );
 
+    final Completor taskLogCompletor = new ArgumentCompletor(
+      new Completor[] {
+        new SimpleCompletor(new String[] { "tlog" }),
+        new SimpleCompletor(new String[] { "-job" }),
+        allJobIdCompletor,
+        new SimpleCompletor(new String[] {"-taskpattern", "-hostpattern"})
+      }
+    );
+
     final MultiCompletor topComletor = new MultiCompletor(
       new Completor[] {
         new SimpleCompletor(new String[] {"pwd", "exit"}),
@@ -357,7 +376,8 @@ public class HadooSh {
         jobPriorityCompletor,
         jobHistoryCompletor,
         jobKillTaskCompletor,
-        runJarCompletor
+        runJarCompletor,
+        taskLogCompletor
       }
     );
 
@@ -570,6 +590,8 @@ public class HadooSh {
 			pwd(line, os);
 		else if(line.startsWith("avrocat"))
 			avrocat(line, os);
+    else if (line.startsWith("tlog"))
+      tlog(line, os);
     else if (line.startsWith("job"))
       job(line, os);
     else if (line.startsWith("runjar"))
@@ -631,35 +653,90 @@ public class HadooSh {
 				println(os, "error, no such file " + parts[1]);
 		}
 	}
-	
-	public static void rm(String fullCommand, OutputStream os) throws IOException
-	{
-		String[] parts = fullCommand.split(" ");
-		for(int i=1; i < parts.length; i++)
-		{
-			Path targ = getPath(parts[i]);
-			if(fs.exists(targ))
-				fs.delete(targ);
-			else
-				println(os, "can't delete + " + targ + ". no such file");
-		}
-	}
-	
-	public static void mv(String fullCommand, OutputStream os) throws IOException
-	{
-		String[] parts = fullCommand.split(" ");
-		if(parts.length != 3)
-			println(os, "error: not given input and output path for move");
-		else
-		{
-			Path src = getPath(parts[1]);
-			Path dst = getPath(parts[2]);
-			if(fs.exists(src))
-				fs.rename(src, dst);
-			else
-				println(os, "can't move + " + src + ". no such file");
-		}
-	}
+
+  public static void tlog(String fullCommand, OutputStream os)
+    throws IOException
+  {
+		final String[] parts = fullCommand.split(" ");
+    String jobId = null;
+    GlobPattern taskPattern = new GlobPattern("*");
+    GlobPattern hostPattern = new GlobPattern("*");
+    int parseState = 0;
+    for (int i = 1; i < parts.length; i++) {
+      switch (parseState) {
+      case 0:
+        if ("-taskpattern".equals(parts[i])) {
+          parseState = 1;
+        } else if ("-hostpattern".equals(parts[i])) {
+          parseState = 2;
+        } else if ("-job".equals(parts[i])) {
+          parseState = 3;
+        }
+        break;
+      case 1:
+        parseState = 0;
+        taskPattern = new GlobPattern(parts[i]);
+        break;
+      case 2:
+        parseState = 0;
+        hostPattern = new GlobPattern(parts[i]);
+        break;
+      case 3:
+        parseState = 0;
+        jobId = parts[i];
+        break;
+      default:
+        throw new IOException(parseState + ": Infeasible parseState!");
+      }
+    }
+
+    if (jobId == null) {
+      println(os, "tlog -job <jobid> [-taskpattern taskglob] [-hostpattern hostglob]");
+      return;
+    }
+
+    int curr = 0;
+    final int batchSize = 10;
+    TaskCompletionEvent[] batch;
+    while ((batch = getTaskEvents(jobId, curr, batchSize)) != null
+        &&  batch.length > 0)
+    {
+      curr += batchSize;
+      for (TaskCompletionEvent tce : batch) {
+        final String tid = tce.getTaskAttemptId().toString();
+        final String trackerUrl = tce.getTaskTrackerHttp();
+        if (!taskPattern.matches(tid)) {
+          continue;
+        }
+        final String hostname = new URL(trackerUrl).getHost();
+        if (!hostPattern.matches(hostname)) {
+          continue;
+        }
+
+        final String baseUrl = trackerUrl
+          + "/tasklog?plaintext=true&attemptid="
+          + tid
+          + "&filter=";
+        for (String s : new String[] {"STDOUT", "STDERR", "SYSLOG"}) {
+          final String url = baseUrl + s;
+          final URLConnection conn = new URL(url).openConnection();
+          if (os == System.out) {
+            println(os, "\n#### BEGIN: " +  url);
+            IOUtils.copyBytes(conn.getInputStream(), os, 1 << 18, false);
+            println(os, "#### END: " +  url + "\n");
+          } else {
+            final BufferedReader br =
+              new BufferedReader(new InputStreamReader(conn.getInputStream()));
+
+            String logLine;
+            while ((logLine = br.readLine()) != null) {
+              println(os, tid + "/" + s + ": " + logLine);
+            }
+          }
+        }
+      }
+    }
+  }
 
 	public static void execFsShell(String fullCommand, OutputStream os)
 			throws IOException {
@@ -681,30 +758,6 @@ public class HadooSh {
     } finally {
       System.setOut(oldout);
     }
-	}
-
-	public static void cat(String fullCommand, OutputStream os)
-			throws IOException {
-		String[] parts = fullCommand.split(" ");
-		if (parts.length == 1) {
-			println(os, "error, not a file");
-			return;
-		} else {
-			for (int i = 1; i < parts.length; i++) {
-				Path f = new Path(parts[i]);
-				if (fs.exists(f)) {
-					BufferedReader br = new BufferedReader(
-							new InputStreamReader(fs.open(f)));
-					String s;
-					while ((s = br.readLine()) != null) {
-						println(os, s);
-					}
-					br.close();
-				} else {
-					println(os, "error, not a file");
-				}
-			}
-		}
 	}
 
 	public static void head(String fullCommand, OutputStream os)
@@ -967,5 +1020,38 @@ public class HadooSh {
       jobClient = new JobClient(config);
     }
     return jobClient;
+  }
+
+  private static TaskCompletionEvent[] getTaskEvents(
+    String jstr,
+    int first,
+    int num)
+  throws IOException
+  {
+    // Hack: instead of creating the JobSubmissionClient from the conf
+    // extract it via reflection
+    //
+    final JobClient jc = getJobClient();
+    if (jsp == null) {
+      try {
+        final Field f = jc.getClass().getDeclaredField("jobSubmitClient");
+        f.setAccessible(true);
+        jsp = f.get(jc);
+        gtce = jsp.getClass().getMethod(
+          "getTaskCompletionEvents", JobID.class, int.class, int.class);
+      } catch (Exception e) {
+        jsp = null;
+        LOG.error("Failed to obtain JobSubmissionProtocol.", e);
+        return new TaskCompletionEvent[0];
+      }
+    }
+    try {
+      final JobID jobId = JobID.forName(jstr);
+      return (TaskCompletionEvent[]) gtce.invoke(
+        jsp, new Object[] {jobId, first, num});
+    } catch (Exception e) {
+      LOG.error("Failed to invoke getTaskCompletionEvents.", e);
+      return new TaskCompletionEvent[0];
+    }
   }
 }
