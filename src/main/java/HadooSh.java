@@ -12,6 +12,7 @@ import java.io.PrintWriter;
 import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
@@ -20,7 +21,6 @@ import java.net.URL;
 import java.net.URLConnection;
 import java.security.Permission;
 
-import java.util.LinkedList;
 import java.util.List;
 
 import org.apache.avro.Schema;
@@ -42,6 +42,8 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.mapred.JobClient;
 import org.apache.hadoop.mapred.JobConf;
+import org.apache.hadoop.mapred.JobHistory;
+import org.apache.hadoop.mapred.JobHistory.*;
 import org.apache.hadoop.mapred.JobID;
 import org.apache.hadoop.mapred.JobPriority;
 import org.apache.hadoop.mapred.JobStatus;
@@ -81,6 +83,7 @@ public class HadooSh {
 
   private static void forbidSystemExitCall() {
     final SecurityManager securityManager = new SecurityManager() {
+      @Override
       public void checkPermission(Permission permission ) {
         if(permission.getName().startsWith("exitVM")) {
           throw new ExitTrappedException();
@@ -158,7 +161,6 @@ public class HadooSh {
 
 		ConsoleReader reader = new ConsoleReader();
 		reader.setBellEnabled(false);
-		List completors = new LinkedList();
 		String[] commandsList = new String[] {
       "cd",
       "head",
@@ -172,6 +174,7 @@ public class HadooSh {
     final Completor allJobIdCompletor = new JobIdCompletor(false);
     final Completor taskIdCompletor = new TaskIdCompletor();
     final Completor localJarCompletor = new FileNameCompletor() {
+      @Override
       public int matchFiles(
         String buffer,
         String translated,
@@ -352,12 +355,34 @@ public class HadooSh {
       }
     );
 
-    final Completor taskLogCompletor = new ArgumentCompletor(
+    final Completor tlogCompletor = new SimpleCompletor(
+      new String[] {
+        "tlog"
+      }
+    );
+
+    final Completor tlogPatternComletor = new SimpleCompletor(
+      new String[] {
+        "-taskpattern",
+        "-hostpattern"
+      }
+    );
+
+    final Completor tlogWithJobCompletor = new ArgumentCompletor(
       new Completor[] {
-        new SimpleCompletor(new String[] { "tlog" }),
+        tlogCompletor,
         new SimpleCompletor(new String[] { "-job" }),
         allJobIdCompletor,
-        new SimpleCompletor(new String[] {"-taskpattern", "-hostpattern"})
+        tlogPatternComletor
+      }
+    );
+
+    final Completor tlogWithHistCompletor = new ArgumentCompletor(
+      new Completor[] {
+        tlogCompletor,
+        new SimpleCompletor(new String[] { "-dir" }),
+        hdfsFileNameCompletor,
+        tlogPatternComletor
       }
     );
 
@@ -377,7 +402,8 @@ public class HadooSh {
         jobHistoryCompletor,
         jobKillTaskCompletor,
         runJarCompletor,
-        taskLogCompletor
+        tlogWithJobCompletor,
+        tlogWithHistCompletor
       }
     );
 
@@ -456,7 +482,6 @@ public class HadooSh {
 						}
 						else if(remoteOut > 0)
 						{
-							FileSystem fs = FileSystem.get(config);
 							Path outPath = getPath(outLoc);
 							FSDataOutputStream os = fs.create(outPath, true);
 							getCmdOutput(pipeBreaks[0], os);
@@ -511,7 +536,6 @@ public class HadooSh {
 	private static void dumpToHDFS(InputStream is, String loc)
 			throws IOException {
 		BufferedReader br = new BufferedReader(new InputStreamReader(is));
-		FileSystem fs = FileSystem.get(config);
 		Path outPath = getPath(loc);
 		FSDataOutputStream os = fs.create(outPath, true);
 		
@@ -614,14 +638,13 @@ public class HadooSh {
 		InputStream es = p.getErrorStream();
 		BufferedReader br = new BufferedReader(new InputStreamReader(is));
 
-		String s = null;
+		String s;
 		while ((s = br.readLine()) != null) {
 			println(os, s);
 		}
 		br.close();
 
 		br = new BufferedReader(new InputStreamReader(es));
-		s = null;
 		while ((s = br.readLine()) != null) {
 			println(os, s);
 		}
@@ -654,11 +677,17 @@ public class HadooSh {
 		}
 	}
 
+  private static final String TLOG_USAGE =
+      "tlog\n"
+    + "  -job <jobid> |\n"
+    + "  -dir <jobOutputDir>\n"
+    + "  [-taskpattern taskglob] [-hostpattern hostglob]";
   public static void tlog(String fullCommand, OutputStream os)
     throws IOException
   {
 		final String[] parts = fullCommand.split(" ");
     String jobId = null;
+    String jobDir = null;
     GlobPattern taskPattern = new GlobPattern("*");
     GlobPattern hostPattern = new GlobPattern("*");
     int parseState = 0;
@@ -671,6 +700,11 @@ public class HadooSh {
           parseState = 2;
         } else if ("-job".equals(parts[i])) {
           parseState = 3;
+        } else if ("-dir".equals(parts[i])) {
+          parseState = 4;
+        } else {
+          println(os, TLOG_USAGE);
+          return;
         }
         break;
       case 1:
@@ -685,13 +719,54 @@ public class HadooSh {
         parseState = 0;
         jobId = parts[i];
         break;
+      case 4:
+        parseState = 0;
+        jobDir = parts[i];
+        break;
       default:
         throw new IOException(parseState + ": Infeasible parseState!");
       }
     }
 
-    if (jobId == null) {
-      println(os, "tlog -job <jobid> [-taskpattern taskglob] [-hostpattern hostglob]");
+    if (jobId == null && jobDir == null) {
+      println(os, TLOG_USAGE);
+      return;
+    }
+
+    JobHistory.JobInfo jobInfo = null;
+    if (jobDir != null) {
+      // Hack: extract JobInfo from HistoryViewer
+      //
+      try {
+        final Class<?> clz = Class.forName("org.apache.hadoop.mapred.HistoryViewer");
+        final Constructor<?> hvc = clz.getDeclaredConstructor(
+          String.class, Configuration.class, boolean.class);
+        hvc.setAccessible(true);
+        final Field jf = clz.getDeclaredField("job");
+        jf.setAccessible(true);
+        final Object historyViewer = hvc.newInstance(jobDir, config, true);
+        jobInfo = (JobHistory.JobInfo) jf.get(historyViewer);
+      } catch (Throwable infeasible) {
+        LOG.error("Failed to load HistoryViewer.", infeasible);
+      }
+    }
+
+    if (jobInfo != null) {
+      for (JobHistory.Task task : jobInfo.getAllTasks().values()) {
+        for (JobHistory.TaskAttempt att : task.getTaskAttempts().values()) {
+          final String tid = att.get(Keys.TASK_ATTEMPT_ID);
+          if (!taskPattern.matches(tid)) {
+            continue;
+          }
+          final String host = new Path(att.get(Keys.HOSTNAME)).getName();
+          if (!hostPattern.matches(host)) {
+            continue;
+          }
+          final String port = att.get(Keys.HTTP_PORT);
+          final String trackerUrl = "http://" + host + ":" + port;
+          dumpLogs(os, trackerUrl, tid);
+        }
+      }
       return;
     }
 
@@ -712,27 +787,35 @@ public class HadooSh {
         if (!hostPattern.matches(hostname)) {
           continue;
         }
+        dumpLogs(os, trackerUrl, tid);
+      }
+    }
+  }
 
-        final String baseUrl = trackerUrl
-          + "/tasklog?plaintext=true&attemptid="
-          + tid
-          + "&filter=";
-        for (String s : new String[] {"STDOUT", "STDERR", "SYSLOG"}) {
-          final String url = baseUrl + s;
-          final URLConnection conn = new URL(url).openConnection();
-          if (os == System.out) {
-            println(os, "\n#### BEGIN: " +  url);
-            IOUtils.copyBytes(conn.getInputStream(), os, 1 << 18, false);
-            println(os, "#### END: " +  url + "\n");
-          } else {
-            final BufferedReader br =
-              new BufferedReader(new InputStreamReader(conn.getInputStream()));
+  private static void dumpLogs(
+    OutputStream os,
+    String trackerUrl,
+    String tid)
+  throws IOException
+  {
+    final String baseUrl = trackerUrl
+      + "/tasklog?plaintext=true&attemptid="
+      + tid
+      + "&filter=";
+    for (String s : new String[] {"STDOUT", "STDERR", "SYSLOG"}) {
+      final String url = baseUrl + s;
+      final URLConnection conn = new URL(url).openConnection();
+      if (os == System.out) {
+        println(os, "\n#### BEGIN: " +  url);
+        IOUtils.copyBytes(conn.getInputStream(), os, 1 << 18, false);
+        println(os, "#### END: " +  url + "\n");
+      } else {
+        final BufferedReader br =
+          new BufferedReader(new InputStreamReader(conn.getInputStream()));
 
-            String logLine;
-            while ((logLine = br.readLine()) != null) {
-              println(os, tid + "/" + s + ": " + logLine);
-            }
-          }
+        String logLine;
+        while ((logLine = br.readLine()) != null) {
+          println(os, tid + "/" + s + ": " + logLine);
         }
       }
     }
@@ -765,10 +848,8 @@ public class HadooSh {
 		String[] parts = fullCommand.split(" ");
 		if (parts.length > 3) {
 			println(os, "error, usage: head [numLines] file");
-			return;
 		} else if (parts.length == 1) {
 			println(os, "error, not a file");
-			return;
 		} else {
 			try {
 				int numLines = 1;
@@ -781,7 +862,7 @@ public class HadooSh {
 				if (fs.exists(f)) {
 					BufferedReader br = new BufferedReader(
 							new InputStreamReader(fs.open(f)));
-					String line = null;
+					String line;
 					int count = 0;
 					while ((line = br.readLine()) != null && count < numLines) {
 						println(os, line);
@@ -889,7 +970,7 @@ public class HadooSh {
       // pretend we are making a completion when this is not hdfs
       // such that jline invokes us again on a new arg.
       //
-      if (clist.size() == 0) {
+      if (clist.isEmpty()) {
         clist.add("");
         return myBuffer.length();
       }
@@ -928,7 +1009,7 @@ public class HadooSh {
       } catch (IOException e) {
         LOG.error("Unable to list jobs",  e);
       }
-      return clist.size() == 0 ? -1 : 0;
+      return clist.isEmpty() ? -1 : 0;
     }
   }
 
@@ -966,7 +1047,7 @@ public class HadooSh {
       } catch (IOException e) {
         LOG.error("Unable to list running tasks: ", e);
       }
-      return clist.size() == 0 ? -1 : 0;
+      return clist.isEmpty() ? -1 : 0;
     }
   }
 

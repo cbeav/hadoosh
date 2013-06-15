@@ -30,7 +30,9 @@ Currently supported operations:
  - use ">l" to run command output to local filesystem
  - all JobClient commands (hadoop job) are accessible to by typing "job" after the prompt first
  - runjar \<localjar\> ...  (hadoop jar)
- - tlog -job \<jobid\> [-taskpattern taskglob] [-hostpattern hostglob]
+ - tlog -job \<jobid\>
+        -dir \<jobOutputDir\>
+        [-taskpattern taskglob] [-hostpattern hostglob]
     
     ```bash
      # Show all logs for a job:
@@ -50,6 +52,7 @@ Planned future actions:
 Known bugs:
 -----------
 - piped commands that contain quotes such as
+
 ```bash
 cat file | cut -d" " -f 1
 ```
