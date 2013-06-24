@@ -1,0 +1,48 @@
+apply plugin: "java"
+
+// This project
+group = "hadoosh"
+version = "1.0-SNAPSHOT"
+
+// Dependency version
+//
+ext.hadoopVersion = "1.2.0"
+ext.avroVersion = "1.4.1"
+ext.jlineVersion = "1.0"
+
+repositories {
+  mavenCentral()
+  maven {
+    url "http://repo1.maven.org/maven2"
+  }
+}
+
+configurations {
+  provided
+}
+sourceSets {
+  main {
+    compileClasspath += configurations.provided
+  }
+}
+
+dependencies {
+  provided("org.apache.hadoop:hadoop-core:${hadoopVersion}") { transitive = false }
+  compile("org.apache.avro:avro:${avroVersion}") { transitive = true }
+  compile("jline:jline:${jlineVersion}") { transitive = false }
+}
+
+jar {
+  manifest {
+    attributes 'Main-Class': 'HadooSh'
+  }
+  into ('lib') {
+    from configurations.compile.collect { it }
+  }
+}
+
+task(run, dependsOn: 'classes', type: JavaExec) {
+  main = 'HadooSh'
+  classpath = files(System.getenv("HADOOP_CONF_DIR")) + sourceSets.main.runtimeClasspath
+}
+
